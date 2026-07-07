@@ -19,6 +19,19 @@
 
 </div>
 
+## 🆕 Novedades v1.1
+
+- ⚡ **Mini-widget flotante** (`mini.py`): una barrita compacta, siempre encima y
+  anclada abajo a la derecha, para cambiar la IP/red al vuelo sin abrir la ventana grande.
+- 🏷️ **Perfiles guardados**: guarda combinaciones IP/máscara/gateway (ej. *Casa*, *U*,
+  *Trabajo*) y aplícalas de un clic.
+- ⚙️ **Configuración**: opción de *Iniciar con Windows* para tenerlo siempre disponible.
+- 🚫 **Sin consola negra**: se lanza con `NetQuickMini.vbs` (usa `pyw`, sin ventana).
+- 🐛 **Fix**: la aplicación de IP manual ahora limpia espacios y **valida** IP/máscara/gateway
+  antes de ejecutar, con mensajes de error claros.
+
+**Cómo abrir el mini-widget:** doble clic en `NetQuickMini.vbs`.
+
 ## 🎯 ¿Qué es NetQuick?
 
 NetQuick nació de una necesidad simple: **cambiar la IP de tu máquina rápido**, ya sea en la universidad, en el trabajo, o en casa. En lugar de navegar entre menús de Windows o recordar comandos `netsh`, NetQuick lo hace por ti en **un solo clic**.

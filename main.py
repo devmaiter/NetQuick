@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import subprocess
 import re
+import ipaddress
 import psutil
 import ctypes
 import sys
@@ -357,11 +358,28 @@ class NetworkConfigApp:
             err_msg = res_ip.stdout.strip() if res_ip and res_ip.stdout else "Error interno"
             messagebox.showerror("Error DHCP", f"No se pudo asignar DHCP:\n{err_msg}")
 
+    @staticmethod
+    def _ip_valida(valor):
+        try:
+            ipaddress.IPv4Address(valor)
+            return True
+        except ipaddress.AddressValueError:
+            return False
+
     def aplicar_manual(self):
-        if self.switch_val.get(): return 
+        if self.switch_val.get(): return
         if not self.check_admin(): return
-        ip, mask, gw = self.vars['ip'].get(), self.vars['mask'].get(), self.vars['gw'].get()
+        # .strip() para tolerar espacios invisibles que rompen netsh
+        ip = self.vars['ip'].get().strip()
+        mask = self.vars['mask'].get().strip()
+        gw = self.vars['gw'].get().strip()
         if not ip or not mask: return messagebox.showerror("Error", "Faltan datos")
+        if not self._ip_valida(ip):
+            return messagebox.showerror("Error", f"IP no válida: '{ip}'")
+        if not self._ip_valida(mask):
+            return messagebox.showerror("Error", f"Máscara no válida: '{mask}'\nUsa el formato 255.255.255.0")
+        if gw and not self._ip_valida(gw):
+            return messagebox.showerror("Error", f"Puerta de enlace no válida: '{gw}'")
         self.ventana.config(cursor="wait")
         cmd = ['netsh', 'interface', 'ip', 'set', 'address', f'name={self.interface_seleccionada}', 'static', ip, mask]
         if gw: cmd.append(gw)
