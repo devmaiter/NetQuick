@@ -8,9 +8,9 @@ Operaciones de red compartidas para NetQuick (usadas por el mini-widget).
 import ctypes
 import ipaddress
 import os
-import re
 import subprocess
 import sys
+import winreg
 
 import psutil
 
@@ -24,15 +24,30 @@ def _hidden_startupinfo():
     return si
 
 
+def _decodificar(b):
+    """netsh responde en UTF-8 si Windows tiene activado 'UTF-8 mundial'
+    y en la página OEM clásica si no: probar en orden hasta que cuadre,
+    para que los acentos (Sí, está, Dirección…) no lleguen rotos."""
+    if not b:
+        return ""
+    for enc in ("utf-8", "oem", "cp1252"):
+        try:
+            return b.decode(enc)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return b.decode("utf-8", errors="replace")
+
+
 def run(cmd):
     """Ejecuta un comando (lista) sin mostrar ninguna ventana."""
     try:
-        # netsh escribe en la página de códigos OEM: decodificar con "oem"
-        # para que los mensajes con acentos no lleguen corruptos.
-        return subprocess.run(
-            cmd, capture_output=True, encoding="oem", errors="replace",
+        res = subprocess.run(
+            cmd, capture_output=True,
             startupinfo=_hidden_startupinfo(), creationflags=_NO_WINDOW,
         )
+        res.stdout = _decodificar(res.stdout)
+        res.stderr = _decodificar(res.stderr)
+        return res
     except Exception:
         return None
 
@@ -92,35 +107,64 @@ def get_ip(nombre):
     return ""
 
 
-def get_config(nombre):
-    """Config real de la interfaz vía netsh: {'dhcp', 'ip', 'mask', 'gw'}.
+def _iface_guid(nombre):
+    """GUID de la interfaz a partir de su nombre visible, vía registro.
+    No depende del idioma ni de la codificación de Windows."""
+    base = (r"SYSTEM\CurrentControlSet\Control\Network"
+            r"\{4D36E972-E325-11CE-BFC1-08002BE10318}")
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, base) as red:
+            for i in range(winreg.QueryInfoKey(red)[0]):
+                guid = winreg.EnumKey(red, i)
+                try:
+                    with winreg.OpenKey(red, guid + r"\Connection") as con:
+                        if winreg.QueryValueEx(con, "Name")[0] == nombre:
+                            return guid
+                except OSError:
+                    continue
+    except OSError:
+        pass
+    return ""
 
-    netsh responde en el idioma de Windows: se aceptan inglés y español.
+
+def _reg_ip(valor):
+    """Primer valor útil de una entrada de red del registro (REG_MULTI_SZ)."""
+    if isinstance(valor, list):
+        valor = valor[0] if valor else ""
+    return (valor or "").strip("\x00").strip()
+
+
+def get_config(nombre):
+    """Config real de la interfaz: {'dhcp', 'ip', 'mask', 'gw'}.
+
+    Sin parsear texto de netsh: la IP y máscara salen de psutil y el modo
+    DHCP y el gateway del registro (Tcpip\\Parameters\\Interfaces\\{GUID}).
+    Funciona igual en cualquier idioma/configuración de Windows.
     """
     info = {"dhcp": False, "ip": "", "mask": "", "gw": ""}
-    res = run(["netsh", "interface", "ip", "show", "config", f"name={nombre}"])
-    if not (res and res.returncode == 0 and res.stdout):
+    try:
+        for d in psutil.net_if_addrs().get(nombre, []):
+            if d.family.name == "AF_INET":
+                info["ip"] = d.address
+                info["mask"] = d.netmask or ""
+                break
+    except Exception:
+        pass
+    guid = _iface_guid(nombre)
+    if not guid:
         return info
-    out = res.stdout
-    m = re.search(r"DHCP\s+(?:enabled|habilitado)\s*:\s*(\S+)", out, re.IGNORECASE)
-    if m:
-        info["dhcp"] = m.group(1).lower() in ("yes", "sí", "si")
-    m = re.search(r"(?:IP Address|Dirección IP)\s*:\s*(\d+\.\d+\.\d+\.\d+)", out)
-    if m:
-        info["ip"] = m.group(1)
-    m = re.search(r"\((?:mask|máscara)\s+(\d+\.\d+\.\d+\.\d+)\)", out)
-    if m:
-        info["mask"] = m.group(1)
-    else:
-        m = re.search(r"(?:Subnet Prefix|Prefijo de subred)\s*:\s*"
-                      r"\d+\.\d+\.\d+\.\d+/(\d+)", out)
-        if m:
-            v = (0xFFFFFFFF >> (32 - int(m.group(1)))) << (32 - int(m.group(1)))
-            info["mask"] = f"{v >> 24 & 255}.{v >> 16 & 255}.{v >> 8 & 255}.{v & 255}"
-    m = re.search(r"(?:Default Gateway|Puerta de enlace predeterminada)\s*:\s*"
-                  r"(\d+\.\d+\.\d+\.\d+)", out)
-    if m:
-        info["gw"] = m.group(1)
+    ruta = (r"SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces"
+            "\\" + guid)
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, ruta) as k:
+            info["dhcp"] = bool(winreg.QueryValueEx(k, "EnableDHCP")[0])
+            clave_gw = "DhcpDefaultGateway" if info["dhcp"] else "DefaultGateway"
+            try:
+                info["gw"] = _reg_ip(winreg.QueryValueEx(k, clave_gw)[0])
+            except OSError:
+                pass
+    except OSError:
+        pass
     return info
 
 

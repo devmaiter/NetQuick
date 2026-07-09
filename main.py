@@ -98,17 +98,9 @@ class NetworkConfigApp:
         self.actualizar_lista()
 
     def ejecutar_netsh(self, comando):
-        startupinfo = subprocess.STARTUPINFO()
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        startupinfo.wShowWindow = subprocess.SW_HIDE
-        try:
-            # netsh escribe en la página de códigos OEM: decodificar con "oem"
-            # para que los acentos (Sí, Dirección...) no lleguen corruptos.
-            return subprocess.run(
-                comando, capture_output=True, encoding="oem", errors="replace",
-                startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW
-            )
-        except: return None
+        # netops.run oculta la ventana y decodifica la salida sea cual sea
+        # la codificación del Windows (UTF-8 u OEM)
+        return netops.run(comando)
 
     def obtener_interfaces(self):
         try:
@@ -126,25 +118,9 @@ class NetworkConfigApp:
         return data
 
     def obtener_info_detalle(self, nombre):
-        # netsh responde en el idioma de Windows: se aceptan inglés y español.
-        cmd = ['netsh', 'interface', 'ip', 'show', 'config', f'name={nombre}']
-        res = self.ejecutar_netsh(cmd)
-        info = {'dhcp': False, 'ip': '', 'mask': '', 'gw': ''}
-        if res and res.returncode == 0:
-            out = res.stdout
-            dhcp = re.search(r'DHCP\s+(?:enabled|habilitado)\s*:\s*(\S+)', out, re.IGNORECASE)
-            if dhcp: info['dhcp'] = dhcp.group(1).lower() in ('yes', 'sí', 'si')
-            ip = re.search(r'(?:IP Address|Dirección IP)\s*:\s*(\d+\.\d+\.\d+\.\d+)', out)
-            if ip: info['ip'] = ip.group(1)
-            msk = re.search(r'\((?:mask|máscara)\s+(\d+\.\d+\.\d+\.\d+)\)', out)
-            if msk:
-                info['mask'] = msk.group(1)
-            else:
-                cidr = re.search(r'(?:Subnet Prefix|Prefijo de subred)\s*:\s*\d+\.\d+\.\d+\.\d+/(\d+)', out)
-                if cidr: info['mask'] = self.cidr_to_netmask(int(cidr.group(1)))
-            gw = re.search(r'(?:Default Gateway|Puerta de enlace predeterminada)\s*:\s*(\d+\.\d+\.\d+\.\d+)', out)
-            if gw: info['gw'] = gw.group(1)
-        return info
+        # Estado real desde psutil + registro (netops.get_config): idéntico
+        # en cualquier idioma o codificación de Windows.
+        return netops.get_config(nombre)
 
     @staticmethod
     def cidr_to_netmask(cidr):
