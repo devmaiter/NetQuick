@@ -220,12 +220,13 @@ class MiniWidget:
                                      font=("Segoe UI", 9, "bold"), cursor="hand2",
                                      command=self.aplicar_ip)
         self.btn_aplicar.pack(side="left", ipadx=10, ipady=3)
-        # El botón refleja el estado: al escribir una IP distinta vuelve a "Aplicar IP"
-        self.ip.bind("<KeyRelease>", lambda e: self._update_apply_btn())
-        tk.Button(btns, text="Auto (DHCP)", bg=CARD, fg=TEXT, bd=0,
-                  activebackground=CARD_HOVER, activeforeground=TEXT,
-                  font=("Segoe UI", 9), cursor="hand2",
-                  command=self.aplicar_dhcp).pack(side="left", padx=6, ipadx=8, ipady=3)
+        self.btn_dhcp = tk.Button(btns, text="Auto (DHCP)", bg=CARD, fg=TEXT, bd=0,
+                                  activebackground=CARD_HOVER, activeforeground=TEXT,
+                                  font=("Segoe UI", 9, "bold"), cursor="hand2",
+                                  command=self.aplicar_dhcp)
+        self.btn_dhcp.pack(side="left", padx=6, ipadx=8, ipady=3)
+        # Al escribir una IP distinta, "Aplicar IP" se enciende (cambio pendiente)
+        self.ip.bind("<KeyRelease>", lambda e: self._update_mode_buttons())
 
     def _build_profiles(self):
         self.prof_frame = tk.Frame(self.card, bg=BG)
@@ -339,28 +340,53 @@ class MiniWidget:
 
     def _on_iface(self):
         nombre = self._iface_name()
-        ip = self._map.get(nombre, "")
+        cfg = netops.get_config(nombre) if nombre else \
+            {"dhcp": False, "ip": "", "mask": "", "gw": ""}
+        ip = cfg["ip"] or self._map.get(nombre, "")
+        self._dhcp = cfg["dhcp"]
         self._put(self.ip, ip)
-        self._put(self.mask, "255.255.255.0")
-        self._put(self.gw, "")
-        # Estado siempre visible: en qué interfaz estás y con qué IP quedó
+        self._put(self.mask, cfg["mask"] or "255.255.255.0")
+        self._put(self.gw, cfg["gw"])
+        # Estado siempre visible: interfaz, IP con la que quedó y modo actual
         if nombre:
-            self._msg(f"● {nombre}  ·  {ip or 'sin IP'}", OK if ip else ERR)
+            modo = "Auto (DHCP)" if cfg["dhcp"] else "IP fija"
+            self._msg(f"● {nombre}  ·  {ip or 'sin IP'}  ·  {modo}",
+                      OK if ip else ERR)
         else:
             self._msg("Sin interfaces activas", ERR)
         self._render_profiles()
-        self._update_apply_btn()
+        self._update_mode_buttons()
 
-    def _update_apply_btn(self):
-        """Verde de confirmación en el propio botón: '✔ IP aplicada' cuando la
-        IP del campo es la que ya tiene la interfaz."""
+    def _update_mode_buttons(self):
+        """El color dice qué modo está seleccionado: el botón del modo activo
+        queda en verde con ✔; escribir una IP nueva enciende 'Aplicar IP'."""
         if not hasattr(self, "btn_aplicar"):
             return
         ip_actual = self._map.get(self._iface_name(), "")
-        if ip_actual and self._val(self.ip) == ip_actual:
-            self.btn_aplicar.config(text="✔ IP aplicada", bg=ACCENT_DARK)
+        dhcp = getattr(self, "_dhcp", False)
+        pendiente = self._val(self.ip) != ip_actual
+
+        if dhcp:
+            self.btn_dhcp.config(text="✔ Auto (DHCP)", bg=ACCENT, fg="white",
+                                 activebackground=ACCENT_DARK,
+                                 activeforeground="white")
         else:
-            self.btn_aplicar.config(text="Aplicar IP", bg=ACCENT)
+            self.btn_dhcp.config(text="Auto (DHCP)", bg=CARD, fg=TEXT,
+                                 activebackground=CARD_HOVER,
+                                 activeforeground=TEXT)
+
+        if not dhcp and not pendiente and ip_actual:
+            self.btn_aplicar.config(text="✔ IP fija aplicada", bg=ACCENT_DARK,
+                                    fg="white", activebackground=ACCENT_DARK,
+                                    activeforeground="white")
+        elif pendiente:
+            self.btn_aplicar.config(text="Aplicar IP", bg=ACCENT, fg="white",
+                                    activebackground=ACCENT_DARK,
+                                    activeforeground="white")
+        else:
+            self.btn_aplicar.config(text="Aplicar IP", bg=CARD, fg=TEXT,
+                                    activebackground=CARD_HOVER,
+                                    activeforeground=TEXT)
 
     def _msg(self, texto, color=MUTED):
         self.status.config(text=texto, fg=color)
