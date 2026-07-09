@@ -215,10 +215,13 @@ class MiniWidget:
 
         btns = tk.Frame(self.card, bg=BG)
         btns.pack(fill="x", padx=10, pady=(8, 4))
-        tk.Button(btns, text="Aplicar IP", bg=ACCENT, fg="white", bd=0,
-                  activebackground=ACCENT_DARK, activeforeground="white",
-                  font=("Segoe UI", 9, "bold"), cursor="hand2",
-                  command=self.aplicar_ip).pack(side="left", ipadx=10, ipady=3)
+        self.btn_aplicar = tk.Button(btns, text="Aplicar IP", bg=ACCENT, fg="white", bd=0,
+                                     activebackground=ACCENT_DARK, activeforeground="white",
+                                     font=("Segoe UI", 9, "bold"), cursor="hand2",
+                                     command=self.aplicar_ip)
+        self.btn_aplicar.pack(side="left", ipadx=10, ipady=3)
+        # El botón refleja el estado: al escribir una IP distinta vuelve a "Aplicar IP"
+        self.ip.bind("<KeyRelease>", lambda e: self._update_apply_btn())
         tk.Button(btns, text="Auto (DHCP)", bg=CARD, fg=TEXT, bd=0,
                   activebackground=CARD_HOVER, activeforeground=TEXT,
                   font=("Segoe UI", 9), cursor="hand2",
@@ -346,6 +349,18 @@ class MiniWidget:
         else:
             self._msg("Sin interfaces activas", ERR)
         self._render_profiles()
+        self._update_apply_btn()
+
+    def _update_apply_btn(self):
+        """Verde de confirmación en el propio botón: '✔ IP aplicada' cuando la
+        IP del campo es la que ya tiene la interfaz."""
+        if not hasattr(self, "btn_aplicar"):
+            return
+        ip_actual = self._map.get(self._iface_name(), "")
+        if ip_actual and self._val(self.ip) == ip_actual:
+            self.btn_aplicar.config(text="✔ IP aplicada", bg=ACCENT_DARK)
+        else:
+            self.btn_aplicar.config(text="Aplicar IP", bg=ACCENT)
 
     def _msg(self, texto, color=MUTED):
         self.status.config(text=texto, fg=color)
