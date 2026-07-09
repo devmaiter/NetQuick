@@ -6,30 +6,72 @@ NetQuick Mini — widget flotante, siempre encima, para cambiar red/IP al vuelo.
 - Rueda ⚙ con configuración: iniciar con Windows + perfiles guardados.
 - Perfiles: guarda combinaciones (ej. Casa / U / Trabajo) y aplícalas de 1 clic.
 - Sin ventana negra: lánzalo con NetQuickMini.vbs (usa pythonw.exe).
+- Icono en la bandeja del sistema: la ✕ oculta el widget; clic en el icono
+  lo muestra de nuevo. "Salir" está en el menú del icono (clic derecho).
 """
+import ctypes
 import json
 import os
 import shutil
+import sys
+import threading
 import tkinter as tk
+import webbrowser
+import winreg
 from tkinter import ttk
 
 import netops
 
-# Paleta
-ACCENT = "#0072d5"
-BG = "#1E293B"
-CARD = "#273549"
-TEXT = "#F8FAFC"
-MUTED = "#94A3B8"
-OK = "#10B981"
-ERR = "#F87171"
+try:
+    import pystray
+    from PIL import Image, ImageDraw
+    TRAY_DISPONIBLE = True
+except ImportError:
+    TRAY_DISPONIBLE = False
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-PROFILES_FILE = os.path.join(HERE, "profiles.json")
+# Paleta — estilo Dante: blanco, verde y rojo
+ACCENT = "#43A047"        # verde (acción principal, borde)
+ACCENT_DARK = "#2E7D32"   # verde oscuro (hover)
+BG = "#FFFFFF"            # fondo blanco
+CARD = "#F3F4F6"          # gris claro (campos, botones secundarios)
+CARD_HOVER = "#E5E7EB"
+TEXT = "#1F2937"          # texto principal oscuro
+MUTED = "#6B7280"         # texto secundario
+OK = "#2E7D32"            # verde estado
+ERR = "#E53935"           # rojo estado / errores
+
+# Prefijos MAC (OUI) de fabricantes habituales en redes de audio
+OUI_CONOCIDOS = {
+    "00-1d-c1": "Audinate (Dante)",
+    "00-a0-de": "Yamaha",
+    "00-0e-dd": "Shure",
+    "00-60-74": "QSC",
+    "00-04-c4": "Allen & Heath",
+    "b8-27-eb": "Raspberry Pi",
+    "dc-a6-32": "Raspberry Pi",
+}
+
+# Empaquetado con PyInstaller: __file__ apunta a una carpeta temporal, así que
+# los datos del usuario (perfiles) van a %APPDATA%\NetQuick.
+FROZEN = getattr(sys, "frozen", False)
+HERE = os.path.dirname(os.path.abspath(sys.executable if FROZEN else __file__))
+if FROZEN:
+    APP_DIR = os.path.join(os.environ.get("APPDATA", HERE), "NetQuick")
+    os.makedirs(APP_DIR, exist_ok=True)
+else:
+    APP_DIR = HERE
+PROFILES_FILE = os.path.join(APP_DIR, "profiles.json")
+FIRSTRUN_FILE = os.path.join(APP_DIR, ".firstrun")
 VBS_SRC = os.path.join(HERE, "NetQuickMini.vbs")
 STARTUP_DIR = os.path.join(os.environ.get("APPDATA", ""),
                            r"Microsoft\Windows\Start Menu\Programs\Startup")
 VBS_DST = os.path.join(STARTUP_DIR, "NetQuickMini.vbs")
+
+# Como .exe el inicio con Windows se registra en HKCU\...\Run (más fiable
+# que copiar archivos y fácil de quitar desde la rueda ⚙ o el Administrador
+# de tareas > Aplicaciones de inicio).
+RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+RUN_NAME = "NetQuick"
 
 
 # --- Persistencia de perfiles ----------------------------------------------
@@ -48,11 +90,30 @@ def save_profiles(data):
 
 # --- Inicio con Windows ----------------------------------------------------
 def in_startup():
+    if FROZEN:
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
+                winreg.QueryValueEx(k, RUN_NAME)
+            return True
+        except OSError:
+            return False
     return os.path.exists(VBS_DST)
 
 
 def set_startup(on):
     try:
+        if FROZEN:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0,
+                                winreg.KEY_SET_VALUE) as k:
+                if on:
+                    winreg.SetValueEx(k, RUN_NAME, 0, winreg.REG_SZ,
+                                      f'"{sys.executable}"')
+                else:
+                    try:
+                        winreg.DeleteValue(k, RUN_NAME)
+                    except FileNotFoundError:
+                        pass
+            return True
         if on and os.path.exists(VBS_SRC):
             shutil.copyfile(VBS_SRC, VBS_DST)
         elif not on and os.path.exists(VBS_DST):
@@ -60,6 +121,20 @@ def set_startup(on):
         return True
     except Exception:
         return False
+
+
+def primer_arranque_exe():
+    """La primera vez que corre el .exe se auto-registra para iniciar con
+    Windows (queda siempre en la bandeja). Solo una vez: si el usuario lo
+    desactiva en ⚙, se respeta su elección."""
+    if not FROZEN or os.path.exists(FIRSTRUN_FILE):
+        return
+    set_startup(True)
+    try:
+        with open(FIRSTRUN_FILE, "w") as f:
+            f.write("ok")
+    except Exception:
+        pass
 
 
 class MiniWidget:
@@ -84,6 +159,9 @@ class MiniWidget:
 
         self.refrescar(select_default=True)
         self._place_bottom_right()
+        self.tray = None
+        if TRAY_DISPONIBLE:
+            self._init_tray()
         self.root.mainloop()
 
     def _place_bottom_right(self):
@@ -101,9 +179,10 @@ class MiniWidget:
         tk.Label(head, text="⚡ NetQuick", bg=BG, fg=TEXT,
                  font=("Segoe UI", 10, "bold")).pack(side="left")
 
-        for txt, cmd, hover in (("✕", self.root.destroy, ERR),
+        for txt, cmd, hover in (("✕", self.cerrar, ERR),
                                 ("⟳", lambda: self.refrescar(), TEXT),
-                                ("⚙", self.abrir_config, TEXT)):
+                                ("⚙", self.abrir_config, TEXT),
+                                ("🔍", self.abrir_scanner, TEXT)):
             tk.Button(head, text=txt, bg=BG, fg=MUTED, bd=0, activebackground=BG,
                       activeforeground=hover, font=("Segoe UI", 11),
                       cursor="hand2", command=cmd).pack(side="right", padx=3)
@@ -135,11 +214,11 @@ class MiniWidget:
         btns = tk.Frame(self.card, bg=BG)
         btns.pack(fill="x", padx=10, pady=(8, 4))
         tk.Button(btns, text="Aplicar IP", bg=ACCENT, fg="white", bd=0,
-                  activebackground="#0060b5", activeforeground="white",
+                  activebackground=ACCENT_DARK, activeforeground="white",
                   font=("Segoe UI", 9, "bold"), cursor="hand2",
                   command=self.aplicar_ip).pack(side="left", ipadx=10, ipady=3)
         tk.Button(btns, text="Auto (DHCP)", bg=CARD, fg=TEXT, bd=0,
-                  activebackground="#33465f", activeforeground="white",
+                  activebackground=CARD_HOVER, activeforeground=TEXT,
                   font=("Segoe UI", 9), cursor="hand2",
                   command=self.aplicar_dhcp).pack(side="left", padx=6, ipadx=8, ipady=3)
 
@@ -174,6 +253,49 @@ class MiniWidget:
         e.delete(0, "end")
         if value:
             e.insert(0, value)
+
+    # --- Bandeja del sistema -------------------------------------------------
+    def _tray_image(self):
+        """Dibuja el icono: cuadrito azul con un rayo blanco."""
+        img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img)
+        d.rounded_rectangle((4, 4, 60, 60), radius=14, fill=ACCENT)
+        d.polygon([(37, 9), (17, 36), (29, 36), (26, 55), (47, 27), (34, 27)],
+                  fill="white")
+        return img
+
+    def _init_tray(self):
+        menu = pystray.Menu(
+            pystray.MenuItem("Mostrar / Ocultar", self._tray_toggle, default=True),
+            pystray.MenuItem("Salir", self._tray_quit),
+        )
+        self.tray = pystray.Icon("NetQuickMini", self._tray_image(),
+                                 "NetQuick Mini — clic para mostrar/ocultar", menu)
+        threading.Thread(target=self.tray.run, daemon=True).start()
+
+    def _tray_toggle(self, icon=None, item=None):
+        # pystray corre en otro hilo: pasar la orden al hilo de tkinter
+        self.root.after(0, self._toggle_visible)
+
+    def _toggle_visible(self):
+        if self.root.state() == "withdrawn":
+            self.root.deiconify()
+            self.root.attributes("-topmost", True)
+            self._place_bottom_right()
+        else:
+            self.root.withdraw()
+
+    def _tray_quit(self, icon=None, item=None):
+        if self.tray:
+            self.tray.stop()
+        self.root.after(0, self.root.destroy)
+
+    def cerrar(self):
+        """✕: si hay icono de bandeja, solo oculta; si no, cierra del todo."""
+        if self.tray:
+            self.root.withdraw()
+        else:
+            self.root.destroy()
 
     # --- Arrastre -----------------------------------------------------------
     def _drag_start(self, ev):
@@ -241,6 +363,87 @@ class MiniWidget:
         self._put(self.gw, p.get("gw", ""))
         self.aplicar_ip()
 
+    # --- Escáner de dispositivos ---------------------------------------------
+    def abrir_scanner(self):
+        nombre = self.iface.get()
+        if not nombre:
+            return self._msg("Elige una interfaz", ERR)
+
+        win = tk.Toplevel(self.root)
+        win.title("Dispositivos en la red — NetQuick")
+        win.configure(bg=BG)
+        win.attributes("-topmost", True)
+        win.geometry("460x400")
+
+        head = tk.Frame(win, bg=BG)
+        head.pack(fill="x", padx=14, pady=(12, 2))
+        tk.Label(head, text="Dispositivos en la red", bg=BG, fg=TEXT,
+                 font=("Segoe UI", 12, "bold")).pack(side="left")
+        btn_re = tk.Button(head, text="⟳ Reescanear", bg=ACCENT, fg="white", bd=0,
+                           activebackground=ACCENT_DARK, activeforeground="white",
+                           font=("Segoe UI", 8, "bold"), cursor="hand2")
+        btn_re.pack(side="right", ipadx=8, ipady=2)
+
+        estado = tk.Label(win, text="", bg=BG, fg=MUTED,
+                          font=("Segoe UI", 8), anchor="w")
+        estado.pack(fill="x", padx=14)
+
+        lista = tk.Frame(win, bg=BG)
+        lista.pack(fill="both", expand=True, padx=14, pady=8)
+
+        def render(dispositivos):
+            if not win.winfo_exists():
+                return
+            for w in lista.winfo_children():
+                w.destroy()
+            if not dispositivos:
+                estado.config(text="✗ Ningún equipo respondió", fg=ERR)
+                return
+            estado.config(text=f"✔ {len(dispositivos)} dispositivos encontrados",
+                          fg=OK)
+            for d in dispositivos:
+                row = tk.Frame(lista, bg=CARD)
+                row.pack(fill="x", pady=2)
+                tk.Label(row, text="●", bg=CARD, fg=OK,
+                         font=("Segoe UI", 10)).pack(side="left", padx=(8, 4))
+                texto = d["ip"] + ("  (este PC)" if d["propia"] else "")
+                tk.Label(row, text=texto, bg=CARD, fg=TEXT, font=("Consolas", 9),
+                         width=22, anchor="w").pack(side="left")
+                fabricante = OUI_CONOCIDOS.get(d["mac"][:8], "")
+                detalle = f"{d['mac']}  {fabricante}".strip() if d["mac"] else ""
+                tk.Label(row, text=detalle, bg=CARD, fg=MUTED,
+                         font=("Segoe UI", 8), anchor="w"
+                         ).pack(side="left", fill="x", expand=True)
+                if not d["propia"]:
+                    tk.Button(row, text="Web", bg=CARD, fg=ERR, bd=0,
+                              activebackground=CARD_HOVER, activeforeground=ERR,
+                              font=("Segoe UI", 8, "bold"), cursor="hand2",
+                              command=lambda ip=d["ip"]:
+                                  webbrowser.open(f"http://{ip}")
+                              ).pack(side="right", padx=8, pady=2)
+
+        def escanear():
+            ip = netops.get_ip(nombre)
+            if not ip:
+                estado.config(text="✗ La interfaz no tiene IP", fg=ERR)
+                return
+            prefijo = ip.rsplit(".", 1)[0]
+            estado.config(text=f"Escaneando {prefijo}.1–254…", fg=ERR)
+            btn_re.config(state="disabled")
+
+            def trabajo():
+                dispositivos = netops.scan_red(nombre)
+                def terminar():
+                    if win.winfo_exists():
+                        btn_re.config(state="normal")
+                        render(dispositivos)
+                self.root.after(0, terminar)
+
+            threading.Thread(target=trabajo, daemon=True).start()
+
+        btn_re.config(command=escanear)
+        escanear()
+
     # --- Ventana de configuración ------------------------------------------
     def abrir_config(self):
         win = tk.Toplevel(self.root)
@@ -284,7 +487,7 @@ class MiniWidget:
                           font=("Segoe UI", 9), width=12)
         name_e.pack(side="left", padx=6, ipady=2)
         tk.Button(add, text="Guardar valores actuales", bg=ACCENT, fg="white", bd=0,
-                  activebackground="#0060b5", activeforeground="white",
+                  activebackground=ACCENT_DARK, activeforeground="white",
                   font=("Segoe UI", 8, "bold"), cursor="hand2",
                   command=lambda: self._guardar_perfil(name_e.get(), win)
                   ).pack(side="left", ipadx=4, ipady=2)
@@ -334,5 +537,13 @@ class MiniWidget:
             self.startup_var.set(in_startup())
 
 
+def _ya_corriendo():
+    """Evita instancias (e iconos de bandeja) duplicados."""
+    ctypes.windll.kernel32.CreateMutexW(None, False, "NetQuickMini_Instancia")
+    return ctypes.windll.kernel32.GetLastError() == 183  # ERROR_ALREADY_EXISTS
+
+
 if __name__ == "__main__":
-    MiniWidget()
+    if not _ya_corriendo():
+        primer_arranque_exe()
+        MiniWidget()

@@ -9,8 +9,10 @@ import sys
 import threading
 import time
 
+import netops
+
 # --- CONSTANTES DE COLOR E IMAGEN ---
-COLOR_ACCENT = "#0072d5"
+COLOR_ACCENT = "#43A047"  # verde estilo Dante (tema de toda la app)
 COLOR_SUCCESS = "#10B981"
 COLOR_BG_MAIN = "#F8FAFC"
 COLOR_BG_CONTENT = "#FFFFFF"
@@ -59,7 +61,7 @@ class NetworkConfigApp:
         center.place(relx=0.5, rely=0.5, anchor="center")
         tk.Label(center, text="⚡", font=("Segoe UI", 48), bg=COLOR_ACCENT, fg="white").pack(pady=(0, 20))
         tk.Label(center, text="Configurador de Red", font=("Segoe UI", 24, "bold"), bg=COLOR_ACCENT, fg="white").pack()
-        tk.Label(center, text='"Cambia rápido, sin estresarte jajaja"', font=("Segoe UI", 12, "italic"), bg=COLOR_ACCENT, fg="#E0E0E0").pack(pady=(5, 30))
+        tk.Label(center, text='"Cambia rápido, sin estresarte."', font=("Segoe UI", 12, "italic"), bg=COLOR_ACCENT, fg="#E0E0E0").pack(pady=(5, 30))
         tk.Label(center, text="Desarrollado por:", font=("Segoe UI", 10), bg=COLOR_ACCENT, fg="#BBDEFB").pack()
         tk.Label(center, text="Israel Moncayo  &  Oscar Osorio", font=("Segoe UI", 12, "bold"), bg=COLOR_ACCENT, fg="white").pack(pady=(5, 0))
         self.loading_bar = ttk.Progressbar(center, orient="horizontal", length=200, mode="determinate")
@@ -91,6 +93,7 @@ class NetworkConfigApp:
             try:
                 ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, f'"{__file__}"', None, 1)
                 self.ventana.destroy()
+                return
             except: pass
         self.actualizar_lista()
 
@@ -99,8 +102,10 @@ class NetworkConfigApp:
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         startupinfo.wShowWindow = subprocess.SW_HIDE
         try:
+            # netsh escribe en la página de códigos OEM: decodificar con "oem"
+            # para que los acentos (Sí, Dirección...) no lleguen corruptos.
             return subprocess.run(
-                comando, capture_output=True, text=True,
+                comando, capture_output=True, encoding="oem", errors="replace",
                 startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW
             )
         except: return None
@@ -109,27 +114,35 @@ class NetworkConfigApp:
         try:
             interfaces = psutil.net_if_addrs()
             stats = psutil.net_if_stats()
-            data = []
-            for nombre, direcc in interfaces.items():
-                if stats[nombre].isup and not nombre.lower().startswith("lo"):
-                    ip = next((d.address for d in direcc if d.family.name == "AF_INET"), "Sin IP")
-                    icon = "📶" if "wi-fi" in nombre.lower() or "wireless" in nombre.lower() else "🔌"
-                    data.append({'nombre': nombre, 'ip': ip, 'icon': icon})
-            return data
-        except: return []
+        except Exception:
+            return []
+        data = []
+        for nombre, direcc in interfaces.items():
+            st = stats.get(nombre)
+            if st and st.isup and not nombre.lower().startswith("lo"):
+                ip = next((d.address for d in direcc if d.family.name == "AF_INET"), "Sin IP")
+                icon = "📶" if "wi-fi" in nombre.lower() or "wireless" in nombre.lower() else "🔌"
+                data.append({'nombre': nombre, 'ip': ip, 'icon': icon})
+        return data
 
     def obtener_info_detalle(self, nombre):
+        # netsh responde en el idioma de Windows: se aceptan inglés y español.
         cmd = ['netsh', 'interface', 'ip', 'show', 'config', f'name={nombre}']
         res = self.ejecutar_netsh(cmd)
         info = {'dhcp': False, 'ip': '', 'mask': '', 'gw': ''}
         if res and res.returncode == 0:
             out = res.stdout
-            info['dhcp'] = 'DHCP enabled:                         Yes' in out
-            ip = re.search(r'IP Address:\s+(\d+\.\d+\.\d+\.\d+)', out)
+            dhcp = re.search(r'DHCP\s+(?:enabled|habilitado)\s*:\s*(\S+)', out, re.IGNORECASE)
+            if dhcp: info['dhcp'] = dhcp.group(1).lower() in ('yes', 'sí', 'si')
+            ip = re.search(r'(?:IP Address|Dirección IP)\s*:\s*(\d+\.\d+\.\d+\.\d+)', out)
             if ip: info['ip'] = ip.group(1)
-            msk = re.search(r'Subnet Prefix:\s+\d+\.\d+\.\d+\.\d+/(\d+)', out)
-            if msk: info['mask'] = self.cidr_to_netmask(int(msk.group(1)))
-            gw = re.search(r'Default Gateway:\s+(\d+\.\d+\.\d+\.\d+)', out)
+            msk = re.search(r'\((?:mask|máscara)\s+(\d+\.\d+\.\d+\.\d+)\)', out)
+            if msk:
+                info['mask'] = msk.group(1)
+            else:
+                cidr = re.search(r'(?:Subnet Prefix|Prefijo de subred)\s*:\s*\d+\.\d+\.\d+\.\d+/(\d+)', out)
+                if cidr: info['mask'] = self.cidr_to_netmask(int(cidr.group(1)))
+            gw = re.search(r'(?:Default Gateway|Puerta de enlace predeterminada)\s*:\s*(\d+\.\d+\.\d+\.\d+)', out)
             if gw: info['gw'] = gw.group(1)
         return info
 
@@ -335,13 +348,13 @@ class NetworkConfigApp:
         if self.btn_state.get('active'):
             self.btn_action_canvas.config(cursor="hand2")
             if self.switch_val.get(): 
-                 self.btn_action_canvas.bind("<Button-1>", lambda e: self.ejecutar_dhcp_imediato())
+                 self.btn_action_canvas.bind("<Button-1>", lambda e: self.ejecutar_dhcp_inmediato())
             else: 
                  self.btn_action_canvas.bind("<Button-1>", lambda e: self.aplicar_manual())
         else:
             self.btn_action_canvas.config(cursor="arrow")
 
-    def ejecutar_dhcp_imediato(self):
+    def ejecutar_dhcp_inmediato(self):
         if not self.check_admin(): return
         self.ventana.config(cursor="wait")
         cmd_ip = ['netsh', 'interface', 'ip', 'set', 'address', f'name={self.interface_seleccionada}', 'dhcp']
@@ -381,8 +394,16 @@ class NetworkConfigApp:
         if gw and not self._ip_valida(gw):
             return messagebox.showerror("Error", f"Puerta de enlace no válida: '{gw}'")
         self.ventana.config(cursor="wait")
+        en_uso = netops.ip_en_uso(ip)
+        self.ventana.config(cursor="")
+        if en_uso:
+            return messagebox.showwarning(
+                "IP en uso",
+                f"La IP {ip} ya está en uso por otro dispositivo de la red.\n\n"
+                "No se aplicó ningún cambio para evitar un conflicto de IP.")
+        self.ventana.config(cursor="wait")
         cmd = ['netsh', 'interface', 'ip', 'set', 'address', f'name={self.interface_seleccionada}', 'static', ip, mask]
-        if gw: cmd.append(gw)
+        if gw: cmd += [gw, '1']
         res = self.ejecutar_netsh(cmd)
         self.ventana.config(cursor="")
         if res and res.returncode == 0:
