@@ -544,8 +544,7 @@ class MiniWidget:
             if not ip:
                 estado.config(text="✗ La interfaz no tiene IP", fg=ERR)
                 return
-            prefijo = ip.rsplit(".", 1)[0]
-            estado.config(text=f"Escaneando {prefijo}.1–254…", fg=ERR)
+            estado.config(text=f"Escaneando la red de {ip}…", fg=MUTED)
             btn_re.config(state="disabled")
 
             def trabajo():
