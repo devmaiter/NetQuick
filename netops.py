@@ -8,6 +8,7 @@ Operaciones de red compartidas para NetQuick (usadas por el mini-widget).
 import ctypes
 import ipaddress
 import os
+import re
 import subprocess
 import sys
 
@@ -89,6 +90,38 @@ def get_ip(nombre):
         if i["nombre"] == nombre:
             return i["ip"]
     return ""
+
+
+def get_config(nombre):
+    """Config real de la interfaz vía netsh: {'dhcp', 'ip', 'mask', 'gw'}.
+
+    netsh responde en el idioma de Windows: se aceptan inglés y español.
+    """
+    info = {"dhcp": False, "ip": "", "mask": "", "gw": ""}
+    res = run(["netsh", "interface", "ip", "show", "config", f"name={nombre}"])
+    if not (res and res.returncode == 0 and res.stdout):
+        return info
+    out = res.stdout
+    m = re.search(r"DHCP\s+(?:enabled|habilitado)\s*:\s*(\S+)", out, re.IGNORECASE)
+    if m:
+        info["dhcp"] = m.group(1).lower() in ("yes", "sí", "si")
+    m = re.search(r"(?:IP Address|Dirección IP)\s*:\s*(\d+\.\d+\.\d+\.\d+)", out)
+    if m:
+        info["ip"] = m.group(1)
+    m = re.search(r"\((?:mask|máscara)\s+(\d+\.\d+\.\d+\.\d+)\)", out)
+    if m:
+        info["mask"] = m.group(1)
+    else:
+        m = re.search(r"(?:Subnet Prefix|Prefijo de subred)\s*:\s*"
+                      r"\d+\.\d+\.\d+\.\d+/(\d+)", out)
+        if m:
+            v = (0xFFFFFFFF >> (32 - int(m.group(1)))) << (32 - int(m.group(1)))
+            info["mask"] = f"{v >> 24 & 255}.{v >> 16 & 255}.{v >> 8 & 255}.{v & 255}"
+    m = re.search(r"(?:Default Gateway|Puerta de enlace predeterminada)\s*:\s*"
+                  r"(\d+\.\d+\.\d+\.\d+)", out)
+    if m:
+        info["gw"] = m.group(1)
+    return info
 
 
 # --- Validación ------------------------------------------------------------
