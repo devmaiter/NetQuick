@@ -2,7 +2,8 @@
 
 <img src="https://img.shields.io/badge/Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white" alt="Windows"/>
 <img src="https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python"/>
-<img src="https://img.shields.io/badge/Version-1.0.0-blue?style=for-the-badge" alt="Version"/>
+<img src="https://img.shields.io/badge/Version-1.2.0--beta-orange?style=for-the-badge" alt="Version"/>
+<img src="https://img.shields.io/badge/Estado-Beta%20%2F%20Demo%20en%20desarrollo-red?style=for-the-badge" alt="Estado"/>
 <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License"/>
 
 <br/><br/>
@@ -12,6 +13,8 @@
 ### *Cambia rápido, sin estresarte.*
 
 **NetQuick** es una herramienta de escritorio para Windows que te permite configurar tu red en segundos — sin abrir la consola, sin memorizar comandos, sin complicaciones.
+
+> ⚠️ **Versión beta / demo en desarrollo activo.** Funciona y se usa a diario, pero puede cambiar sin aviso y contener errores. No es todavía una versión estable de producción — úsala bajo tu propio criterio.
 
 [📥 Descargar .exe](#-descarga) · [🚀 Características](#-características) · [🛠️ Cómo usar](#%EF%B8%8F-cómo-usar)
 
