@@ -206,38 +206,53 @@ def ip_en_uso(ip):
 
 # --- Escaneo de la subred ----------------------------------------------------
 def scan_red(nombre, timeout_ms=250):
-    """Barrido de la subred /24 de la interfaz: ping a las 254 IPs en paralelo
-    y lectura de la caché ARP. Devuelve [{'ip','mac','propia'}] ordenado por IP.
-    No requiere admin.
+    """Escaneo de la subred REAL de la interfaz (según su máscara).
+
+    - Subredes normales (hasta ~1000 hosts, p.ej. /24): ping a todas las IPs
+      en paralelo y lectura de la caché ARP.
+    - Subredes enormes (p.ej. Dante en link-local 169.254.0.0/16): el barrido
+      es inviable, pero no hace falta — los equipos Dante anuncian por
+      multicast constantemente y llenan solos la caché ARP; se lee entera.
+    Devuelve [{'ip','mac','propia'}] ordenado por IP. No requiere admin.
     """
     import concurrent.futures
     propia = get_ip(nombre)
     if not propia:
         return []
-    prefijo = propia.rsplit(".", 1)[0]
+    mask = get_config(nombre).get("mask") or "255.255.255.0"
+    try:
+        red = ipaddress.ip_network(f"{propia}/{mask}", strict=False)
+    except ValueError:
+        red = ipaddress.ip_network(f"{propia}/24", strict=False)
 
-    def _ping(ip):
-        run(["ping", "-n", "1", "-w", str(timeout_ms), ip])
+    if red.num_addresses <= 1024:
+        def _ping(ip):
+            run(["ping", "-n", "1", "-w", str(timeout_ms), str(ip)])
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=64) as ex:
-        list(ex.map(_ping, [f"{prefijo}.{n}" for n in range(1, 255)]))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=64) as ex:
+            list(ex.map(_ping, red.hosts()))
 
     encontrados = {}
     res = run(["arp", "-a"])
     if res and res.stdout:
         for linea in res.stdout.splitlines():
             partes = linea.split()
-            if len(partes) < 2 or not partes[0].startswith(prefijo + "."):
+            if len(partes) < 2:
                 continue
             ip, mac = partes[0], partes[1].lower()
+            try:
+                if ipaddress.IPv4Address(ip) not in red:
+                    continue
+            except ipaddress.AddressValueError:
+                continue
             # descartar broadcast, multicast y entradas incompletas
             if mac.count("-") != 5 or mac == "ff-ff-ff-ff-ff-ff" \
-               or mac.startswith("01-00-5e") or ip.endswith(".255"):
+               or mac.startswith("01-00-5e") or ip == str(red.broadcast_address):
                 continue
             encontrados[ip] = {"ip": ip, "mac": mac, "propia": False}
     encontrados[propia] = {"ip": propia, "mac": "", "propia": True}
     return sorted(encontrados.values(),
-                  key=lambda d: int(d["ip"].rsplit(".", 1)[1]))
+                  key=lambda d: tuple(int(x) for x in d["ip"].split(".")))
 
 
 # --- Aplicar configuración -------------------------------------------------
