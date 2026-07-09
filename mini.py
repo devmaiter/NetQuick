@@ -144,6 +144,8 @@ class MiniWidget:
         self.root.attributes("-topmost", True)
         self.root.configure(bg=ACCENT)
         self.profiles = load_profiles()
+        self._map = {}
+        self._display = {}
 
         outer = tk.Frame(self.root, bg=ACCENT)
         outer.pack(fill="both", expand=True, padx=2, pady=2)
@@ -154,7 +156,7 @@ class MiniWidget:
         self._build_form()
         self._build_profiles()
         self.status = tk.Label(self.card, text="Listo", bg=BG, fg=MUTED,
-                               font=("Segoe UI", 8), anchor="w")
+                               font=("Segoe UI", 8, "bold"), anchor="w")
         self.status.pack(fill="x", padx=12, pady=(0, 6))
 
         self.refrescar(select_default=True)
@@ -234,8 +236,14 @@ class MiniWidget:
             return
         tk.Label(self.prof_frame, text="Perfiles:", bg=BG, fg=MUTED,
                  font=("Segoe UI", 8)).pack(side="left", padx=(0, 6))
-        for nombre in self.profiles:
-            tk.Button(self.prof_frame, text=nombre, bg=CARD, fg=TEXT, bd=0,
+        # El perfil cuya IP coincide con la actual se resalta en verde con ✔
+        ip_actual = self._map.get(self._iface_name(), "")
+        for nombre, p in self.profiles.items():
+            activo = bool(ip_actual) and p.get("ip") == ip_actual
+            tk.Button(self.prof_frame,
+                      text=("✔ " + nombre) if activo else nombre,
+                      bg=ACCENT if activo else CARD,
+                      fg="white" if activo else TEXT, bd=0,
                       activebackground=ACCENT, activeforeground="white",
                       font=("Segoe UI", 8, "bold"), cursor="hand2",
                       command=lambda n=nombre: self.aplicar_perfil(n)
@@ -306,21 +314,38 @@ class MiniWidget:
                            f"+{self.root.winfo_y() + ev.y - self._dy}")
 
     # --- Lógica -------------------------------------------------------------
+    def _iface_name(self):
+        """Nombre real de la interfaz elegida (el combo muestra 'nombre — IP')."""
+        return self._display.get(self.iface.get(), self.iface.get())
+
     def refrescar(self, select_default=False):
         ifaces = netops.list_interfaces()
+        actual = self._iface_name()
         self._map = {i["nombre"]: i["ip"] for i in ifaces}
+        # El combo muestra también la IP para distinguir las interfaces de un vistazo
+        self._display = {f"{n} — {ip or 'sin IP'}": n for n, ip in self._map.items()}
+        self.iface["values"] = list(self._display.keys())
         nombres = list(self._map.keys())
-        self.iface["values"] = nombres
-        if nombres and (select_default or self.iface.get() not in nombres):
-            self.iface.set(next((n for n in nombres if n.startswith("NETLAB-")), nombres[0]))
+        if nombres and (select_default or actual not in self._map):
+            actual = next((n for n in nombres if n.startswith("NETLAB-")), nombres[0])
+        for disp, n in self._display.items():
+            if n == actual:
+                self.iface.set(disp)
+                break
         self._on_iface()
 
     def _on_iface(self):
-        ip = self._map.get(self.iface.get(), "")
+        nombre = self._iface_name()
+        ip = self._map.get(nombre, "")
         self._put(self.ip, ip)
         self._put(self.mask, "255.255.255.0")
         self._put(self.gw, "")
-        self._msg(f"Actual: {ip or 'sin IP'}", MUTED)
+        # Estado siempre visible: en qué interfaz estás y con qué IP quedó
+        if nombre:
+            self._msg(f"● {nombre}  ·  {ip or 'sin IP'}", OK if ip else ERR)
+        else:
+            self._msg("Sin interfaces activas", ERR)
+        self._render_profiles()
 
     def _msg(self, texto, color=MUTED):
         self.status.config(text=texto, fg=color)
@@ -333,7 +358,7 @@ class MiniWidget:
         return False
 
     def aplicar_ip(self):
-        nombre = self.iface.get()
+        nombre = self._iface_name()
         if not nombre:
             return self._msg("Elige una interfaz", ERR)
         if not self._ensure_admin():
@@ -346,7 +371,7 @@ class MiniWidget:
             self.refrescar()
 
     def aplicar_dhcp(self):
-        nombre = self.iface.get()
+        nombre = self._iface_name()
         if not nombre:
             return self._msg("Elige una interfaz", ERR)
         if not self._ensure_admin():
@@ -365,7 +390,7 @@ class MiniWidget:
 
     # --- Escáner de dispositivos ---------------------------------------------
     def abrir_scanner(self):
-        nombre = self.iface.get()
+        nombre = self._iface_name()
         if not nombre:
             return self._msg("Elige una interfaz", ERR)
 
