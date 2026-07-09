@@ -204,6 +204,90 @@ def ip_en_uso(ip):
     return False
 
 
+# --- Descubrimiento Dante (mDNS) --------------------------------------------
+def _nombre_mdns(datos):
+    """Nombre del equipo en una respuesta mDNS ('MiConsola._netaudio-arc...').
+
+    La etiqueta del nombre precede a '_netaudio' bien de forma literal, bien
+    seguida de un puntero DNS comprimido (0xC0 xx) que apunta a '_netaudio'.
+    Mejor esfuerzo: si no se puede extraer, se devuelve cadena vacía.
+    """
+    posiciones = []
+    i = datos.find(b"_netaudio")
+    while i != -1:
+        posiciones.append(i - 1)  # byte de longitud de '_netaudio-...'
+        i = datos.find(b"_netaudio", i + 1)
+    for p in range(len(datos) - 1):
+        if datos[p] & 0xC0 == 0xC0:  # puntero comprimido
+            destino = ((datos[p] & 0x3F) << 8) | datos[p + 1]
+            if datos[destino + 1:destino + 10] == b"_netaudio":
+                posiciones.append(p)
+    for fin in posiciones:
+        if fin < 2:
+            continue
+        for k in range(max(0, fin - 64), fin):
+            if k + 1 + datos[k] == fin and 0 < datos[k] <= 63:
+                try:
+                    nombre = datos[k + 1:fin].decode("utf-8")
+                except UnicodeDecodeError:
+                    continue
+                if nombre.isprintable() and not nombre.startswith("_"):
+                    return nombre
+    return ""
+
+
+def descubrir_dante(nombre, timeout=2.0):
+    """Descubrimiento nativo de equipos Dante, igual que Dante Controller:
+    consulta mDNS/DNS-SD por '_netaudio-arc._udp.local' a 224.0.0.251:5353
+    (documentación oficial de Audinate). Se envía desde un puerto efímero
+    ('legacy unicast', RFC 6762) para que cada equipo responda directo.
+    Devuelve {ip: nombre_dante}. No requiere admin.
+    """
+    import socket
+    import struct
+    import time
+
+    propia = get_ip(nombre)
+    if not propia:
+        return {}
+
+    def qname(dominio):
+        out = b""
+        for parte in dominio.split("."):
+            out += bytes([len(parte)]) + parte.encode()
+        return out + b"\x00"
+
+    # Cabecera DNS estándar + 1 pregunta PTR clase IN
+    consulta = (struct.pack(">HHHHHH", 0, 0, 1, 0, 0, 0)
+                + qname("_netaudio-arc._udp.local")
+                + struct.pack(">HH", 12, 1))
+
+    encontrados = {}
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF,
+                     socket.inet_aton(propia))
+        s.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 32)
+        s.bind((propia, 0))
+        s.settimeout(0.3)
+        for _ in range(2):  # repetir por si algún equipo no oye la primera
+            s.sendto(consulta, ("224.0.0.251", 5353))
+            fin = time.time() + timeout / 2
+            while time.time() < fin:
+                try:
+                    datos, origen = s.recvfrom(4096)
+                except socket.timeout:
+                    continue
+                except OSError:
+                    break
+                ip = origen[0]
+                encontrados[ip] = _nombre_mdns(datos) or encontrados.get(ip, "")
+        s.close()
+    except OSError:
+        pass
+    return encontrados
+
+
 # --- Escaneo de la subred ----------------------------------------------------
 def scan_red(nombre, timeout_ms=250):
     """Escaneo de la subred REAL de la interfaz (según su máscara).
@@ -249,8 +333,20 @@ def scan_red(nombre, timeout_ms=250):
             if mac.count("-") != 5 or mac == "ff-ff-ff-ff-ff-ff" \
                or mac.startswith("01-00-5e") or ip == str(red.broadcast_address):
                 continue
-            encontrados[ip] = {"ip": ip, "mac": mac, "propia": False}
-    encontrados[propia] = {"ip": propia, "mac": "", "propia": True}
+            encontrados[ip] = {"ip": ip, "mac": mac, "propia": False,
+                               "dante": None}
+
+    # Equipos Dante por mDNS (como Dante Controller). Sin filtrar por subred:
+    # así aparecen también los que quedaron con una IP fija equivocada.
+    for ip, nombre_d in descubrir_dante(nombre).items():
+        if ip == propia:
+            continue
+        e = encontrados.setdefault(ip, {"ip": ip, "mac": "", "propia": False,
+                                        "dante": None})
+        e["dante"] = nombre_d or "Dante"
+
+    encontrados[propia] = {"ip": propia, "mac": "", "propia": True,
+                           "dante": None}
     return sorted(encontrados.values(),
                   key=lambda d: tuple(int(x) for x in d["ip"].split(".")))
 
