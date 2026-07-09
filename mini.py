@@ -265,8 +265,9 @@ class MiniWidget:
                                   font=("Segoe UI", 9, "bold"), cursor="hand2",
                                   command=self.aplicar_dhcp)
         self.btn_dhcp.pack(side="left", padx=6, ipadx=8, ipady=3)
-        # Al escribir una IP distinta, "Aplicar IP" se enciende (cambio pendiente)
-        self.ip.bind("<KeyRelease>", lambda e: self._update_mode_buttons())
+        # Al editar IP/máscara/gateway, "Aplicar IP" se enciende (cambio pendiente)
+        for campo in (self.ip, self.mask, self.gw):
+            campo.bind("<KeyRelease>", lambda e: self._update_mode_buttons())
 
     def _build_profiles(self):
         self.prof_frame = tk.Frame(self.card, bg=BG)
@@ -387,6 +388,9 @@ class MiniWidget:
         self._put(self.ip, ip)
         self._put(self.mask, cfg["mask"] or "255.255.255.0")
         self._put(self.gw, cfg["gw"])
+        # foto de lo aplicado: contra esto se detectan cambios pendientes
+        self._aplicado = (self._val(self.ip), self._val(self.mask),
+                          self._val(self.gw))
         # Estado siempre visible: interfaz, IP con la que quedó y modo actual
         if nombre:
             modo = "Auto (DHCP)" if cfg["dhcp"] else "IP fija"
@@ -398,35 +402,39 @@ class MiniWidget:
         self._update_mode_buttons()
 
     def _update_mode_buttons(self):
-        """El color dice qué modo está seleccionado: el botón del modo activo
-        queda en verde con ✔; escribir una IP nueva enciende 'Aplicar IP'."""
+        """El color dice qué modo está seleccionado y el botón del modo activo
+        se desactiva (verde con ✔, sin clic posible): no hay forma de provocar
+        el error 'ya estaba en ese modo'. Editar un campo enciende 'Aplicar IP'."""
         if not hasattr(self, "btn_aplicar"):
             return
-        ip_actual = self._map.get(self._iface_name(), "")
         dhcp = getattr(self, "_dhcp", False)
-        pendiente = self._val(self.ip) != ip_actual
+        campos = (self._val(self.ip), self._val(self.mask), self._val(self.gw))
+        pendiente = campos != getattr(self, "_aplicado", ("", "", ""))
 
         if dhcp:
-            self.btn_dhcp.config(text="✔ Auto (DHCP)", bg=ACCENT, fg="white",
-                                 activebackground=ACCENT_DARK,
-                                 activeforeground="white")
+            self.btn_dhcp.config(text="✔ Auto (DHCP)", bg=ACCENT,
+                                 disabledforeground="white",
+                                 state="disabled", cursor="arrow")
         else:
             self.btn_dhcp.config(text="Auto (DHCP)", bg=CARD, fg=TEXT,
                                  activebackground=CARD_HOVER,
-                                 activeforeground=TEXT)
+                                 activeforeground=TEXT,
+                                 state="normal", cursor="hand2")
 
-        if not dhcp and not pendiente and ip_actual:
+        if not dhcp and not pendiente and campos[0]:
             self.btn_aplicar.config(text="✔ IP fija aplicada", bg=ACCENT_DARK,
-                                    fg="white", activebackground=ACCENT_DARK,
-                                    activeforeground="white")
+                                    disabledforeground="white",
+                                    state="disabled", cursor="arrow")
         elif pendiente:
             self.btn_aplicar.config(text="Aplicar IP", bg=ACCENT, fg="white",
                                     activebackground=ACCENT_DARK,
-                                    activeforeground="white")
+                                    activeforeground="white",
+                                    state="normal", cursor="hand2")
         else:
             self.btn_aplicar.config(text="Aplicar IP", bg=CARD, fg=TEXT,
                                     activebackground=CARD_HOVER,
-                                    activeforeground=TEXT)
+                                    activeforeground=TEXT,
+                                    state="normal", cursor="hand2")
 
     def _msg(self, texto, color=MUTED):
         self.status.config(text=texto, fg=color)
