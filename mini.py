@@ -67,11 +67,41 @@ STARTUP_DIR = os.path.join(os.environ.get("APPDATA", ""),
                            r"Microsoft\Windows\Start Menu\Programs\Startup")
 VBS_DST = os.path.join(STARTUP_DIR, "NetQuickMini.vbs")
 
-# Como .exe el inicio con Windows se registra en HKCU\...\Run (más fiable
-# que copiar archivos y fácil de quitar desde la rueda ⚙ o el Administrador
-# de tareas > Aplicaciones de inicio).
+# Como .exe la app corre siempre elevada (manifest requireAdministrator):
+# así aplicar IP/DHCP nunca cierra ni relanza la ventana. El inicio con
+# Windows usa una tarea programada con privilegios (RunLevel Highest), que
+# arranca elevada al iniciar sesión SIN mostrar UAC.
+TASK_NAME = "NetQuick"
+# Clave Run de versiones anteriores (solo para migrar/limpiar)
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 RUN_NAME = "NetQuick"
+
+
+def _task_xml(exe):
+    """XML de la tarea programada: al iniciar sesión, elevada, sin límites
+    de batería ni de tiempo (las opciones por defecto de schtasks los ponen)."""
+    return f"""<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <Triggers>
+    <LogonTrigger><Enabled>true</Enabled></LogonTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>HighestAvailable</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <StartWhenAvailable>true</StartWhenAvailable>
+  </Settings>
+  <Actions Context="Author">
+    <Exec><Command>{exe}</Command></Exec>
+  </Actions>
+</Task>"""
 
 
 # --- Persistencia de perfiles ----------------------------------------------
@@ -91,28 +121,26 @@ def save_profiles(data):
 # --- Inicio con Windows ----------------------------------------------------
 def in_startup():
     if FROZEN:
-        try:
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
-                winreg.QueryValueEx(k, RUN_NAME)
-            return True
-        except OSError:
-            return False
+        res = netops.run(["schtasks", "/Query", "/TN", TASK_NAME])
+        return bool(res and res.returncode == 0)
     return os.path.exists(VBS_DST)
 
 
 def set_startup(on):
     try:
         if FROZEN:
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0,
-                                winreg.KEY_SET_VALUE) as k:
-                if on:
-                    winreg.SetValueEx(k, RUN_NAME, 0, winreg.REG_SZ,
-                                      f'"{sys.executable}"')
-                else:
-                    try:
-                        winreg.DeleteValue(k, RUN_NAME)
-                    except FileNotFoundError:
-                        pass
+            if on:
+                xml_path = os.path.join(APP_DIR, "task.xml")
+                with open(xml_path, "w", encoding="utf-16") as f:
+                    f.write(_task_xml(sys.executable))
+                res = netops.run(["schtasks", "/Create", "/TN", TASK_NAME,
+                                  "/XML", xml_path, "/F"])
+                try:
+                    os.remove(xml_path)
+                except OSError:
+                    pass
+                return bool(res and res.returncode == 0)
+            netops.run(["schtasks", "/Delete", "/TN", TASK_NAME, "/F"])
             return True
         if on and os.path.exists(VBS_SRC):
             shutil.copyfile(VBS_SRC, VBS_DST)
@@ -127,7 +155,19 @@ def primer_arranque_exe():
     """La primera vez que corre el .exe se auto-registra para iniciar con
     Windows (queda siempre en la bandeja). Solo una vez: si el usuario lo
     desactiva en ⚙, se respeta su elección."""
-    if not FROZEN or os.path.exists(FIRSTRUN_FILE):
+    if not FROZEN:
+        return
+    # Migrar instalaciones previas: quitar la clave Run (arrancaba sin
+    # permisos) y sustituirla por la tarea programada elevada.
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0,
+                            winreg.KEY_ALL_ACCESS) as k:
+            winreg.QueryValueEx(k, RUN_NAME)
+            winreg.DeleteValue(k, RUN_NAME)
+            set_startup(True)
+    except OSError:
+        pass
+    if os.path.exists(FIRSTRUN_FILE):
         return
     set_startup(True)
     try:
@@ -421,6 +461,9 @@ class MiniWidget:
         self._msg(("✔ " if ok else "✗ ") + msg, OK if ok else ERR)
         if ok:
             self.refrescar()
+            # el servidor DHCP tarda un par de segundos en dar la IP nueva
+            self.root.after(2500, self.refrescar)
+            self.root.after(6000, self.refrescar)
 
     def aplicar_perfil(self, nombre):
         p = self.profiles.get(nombre, {})
