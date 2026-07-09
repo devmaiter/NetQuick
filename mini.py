@@ -210,7 +210,10 @@ class MiniWidget:
         self._build_profiles()
         self.status = tk.Label(self.card, text="Listo", bg=BG, fg=MUTED,
                                font=("Segoe UI", 8, "bold"), anchor="w")
-        self.status.pack(fill="x", padx=12, pady=(0, 6))
+        self.status.pack(fill="x", padx=12, pady=(0, 2))
+        tk.Label(self.card, text="© 2026 Oscar Julián Osorio & Israel Moncayo",
+                 bg=BG, fg="#B9BFC7", font=("Segoe UI", 7), anchor="e"
+                 ).pack(fill="x", padx=12, pady=(0, 5))
 
         self.refrescar(select_default=True)
         self._place_bottom_right()
