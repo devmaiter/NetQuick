@@ -26,8 +26,10 @@ def _hidden_startupinfo():
 def run(cmd):
     """Ejecuta un comando (lista) sin mostrar ninguna ventana."""
     try:
+        # netsh escribe en la página de códigos OEM: decodificar con "oem"
+        # para que los mensajes con acentos no lleguen corruptos.
         return subprocess.run(
-            cmd, capture_output=True, text=True,
+            cmd, capture_output=True, encoding="oem", errors="replace",
             startupinfo=_hidden_startupinfo(), creationflags=_NO_WINDOW,
         )
     except Exception:
@@ -49,10 +51,19 @@ def pythonw():
 
 
 def relaunch_as_admin(script):
-    """Reinicia el script como administrador usando pythonw (sin ventana negra)."""
-    ctypes.windll.shell32.ShellExecuteW(
-        None, "runas", pythonw(), f'"{os.path.abspath(script)}"', None, 1
-    )
+    """Reinicia la app como administrador (sin ventana negra).
+
+    Empaquetado como .exe (PyInstaller): relanzar el propio .exe.
+    En desarrollo: relanzar el script con pythonw.
+    """
+    if getattr(sys, "frozen", False):
+        ctypes.windll.shell32.ShellExecuteW(
+            None, "runas", sys.executable, None, None, 1
+        )
+    else:
+        ctypes.windll.shell32.ShellExecuteW(
+            None, "runas", pythonw(), f'"{os.path.abspath(script)}"', None, 1
+        )
     sys.exit(0)
 
 
@@ -89,6 +100,69 @@ def ip_valida(valor):
         return False
 
 
+# --- Detección de conflictos -----------------------------------------------
+def ip_en_uso(ip):
+    """True si otro dispositivo de la red ya responde en esa IP.
+
+    Comprueba con un ping corto y, por si el otro equipo bloquea ping
+    (firewall), revisa también la caché ARP que el propio ping refresca.
+    Las IPs de esta misma máquina no cuentan como conflicto.
+    """
+    ip = ip.strip()
+    for i in list_interfaces():
+        if i["ip"] == ip:
+            return False
+    res = run(["ping", "-n", "1", "-w", "400", ip])
+    # returncode 0 con "unreachable" también existe: exigir respuesta real (TTL)
+    if res and res.returncode == 0 and "ttl=" in (res.stdout or "").lower():
+        return True
+    res = run(["arp", "-a"])
+    if res and res.stdout:
+        for linea in res.stdout.splitlines():
+            partes = linea.split()
+            if len(partes) >= 2 and partes[0] == ip:
+                mac = partes[1].lower()
+                if mac.count("-") == 5 and mac != "ff-ff-ff-ff-ff-ff":
+                    return True
+    return False
+
+
+# --- Escaneo de la subred ----------------------------------------------------
+def scan_red(nombre, timeout_ms=250):
+    """Barrido de la subred /24 de la interfaz: ping a las 254 IPs en paralelo
+    y lectura de la caché ARP. Devuelve [{'ip','mac','propia'}] ordenado por IP.
+    No requiere admin.
+    """
+    import concurrent.futures
+    propia = get_ip(nombre)
+    if not propia:
+        return []
+    prefijo = propia.rsplit(".", 1)[0]
+
+    def _ping(ip):
+        run(["ping", "-n", "1", "-w", str(timeout_ms), ip])
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=64) as ex:
+        list(ex.map(_ping, [f"{prefijo}.{n}" for n in range(1, 255)]))
+
+    encontrados = {}
+    res = run(["arp", "-a"])
+    if res and res.stdout:
+        for linea in res.stdout.splitlines():
+            partes = linea.split()
+            if len(partes) < 2 or not partes[0].startswith(prefijo + "."):
+                continue
+            ip, mac = partes[0], partes[1].lower()
+            # descartar broadcast, multicast y entradas incompletas
+            if mac.count("-") != 5 or mac == "ff-ff-ff-ff-ff-ff" \
+               or mac.startswith("01-00-5e") or ip.endswith(".255"):
+                continue
+            encontrados[ip] = {"ip": ip, "mac": mac, "propia": False}
+    encontrados[propia] = {"ip": propia, "mac": "", "propia": True}
+    return sorted(encontrados.values(),
+                  key=lambda d: int(d["ip"].rsplit(".", 1)[1]))
+
+
 # --- Aplicar configuración -------------------------------------------------
 def set_static(nombre, ip, mask, gw=None):
     """Aplica IP estática. Devuelve (ok, mensaje)."""
@@ -100,13 +174,16 @@ def set_static(nombre, ip, mask, gw=None):
         return False, "Máscara no válida (usa 255.255.255.0)"
     if gw and not ip_valida(gw):
         return False, f"Gateway no válido: {gw}"
+    if ip_en_uso(ip):
+        return False, f"⚠ {ip} ya está en uso — no se aplicó nada"
     cmd = ["netsh", "interface", "ip", "set", "address", f"name={nombre}", "static", ip, mask]
     if gw:
         cmd += [gw, "1"]
     res = run(cmd)
     if res and res.returncode == 0:
         return True, f"IP {ip} aplicada"
-    return False, (res.stdout.strip() if res and res.stdout else "Error (¿admin?)")
+    detalle = ((res.stdout or "") + (res.stderr or "")).strip() if res else ""
+    return False, (detalle or "Error (¿admin?)")
 
 
 def set_dhcp(nombre):
@@ -115,4 +192,5 @@ def set_dhcp(nombre):
     run(["netsh", "interface", "ip", "set", "dns", f"name={nombre}", "dhcp"])
     if r1 and r1.returncode == 0:
         return True, "DHCP activado"
-    return False, (r1.stdout.strip() if r1 and r1.stdout else "Error (¿admin?)")
+    detalle = ((r1.stdout or "") + (r1.stderr or "")).strip() if r1 else ""
+    return False, (detalle or "Error (¿admin?)")
