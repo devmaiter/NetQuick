@@ -151,12 +151,25 @@ def set_startup(on):
         return False
 
 
+def _regla_firewall():
+    """Regla de firewall para el exe (como hace Dante Controller al
+    instalarse): sin ella Windows bloquea las respuestas mDNS unicast de los
+    equipos Dante hacia el puerto efímero del escáner. Idempotente: borra la
+    regla anterior por si el exe cambió de ruta."""
+    netops.run(["netsh", "advfirewall", "firewall", "delete", "rule",
+                "name=NetQuick"])
+    netops.run(["netsh", "advfirewall", "firewall", "add", "rule",
+                "name=NetQuick", "dir=in", "action=allow",
+                f"program={sys.executable}", "profile=any", "enable=yes"])
+
+
 def primer_arranque_exe():
     """La primera vez que corre el .exe se auto-registra para iniciar con
     Windows (queda siempre en la bandeja). Solo una vez: si el usuario lo
     desactiva en ⚙, se respeta su elección."""
     if not FROZEN:
         return
+    _regla_firewall()
     # Migrar instalaciones previas: quitar la clave Run (arrancaba sin
     # permisos) y sustituirla por la tarea programada elevada.
     try:
@@ -521,16 +534,27 @@ class MiniWidget:
             for d in dispositivos:
                 row = tk.Frame(lista, bg=CARD)
                 row.pack(fill="x", pady=2)
-                tk.Label(row, text="●", bg=CARD, fg=OK,
+                es_dante = bool(d.get("dante"))
+                tk.Label(row, text="⚡" if es_dante else "●", bg=CARD,
+                         fg=ACCENT if es_dante else OK,
                          font=("Segoe UI", 10)).pack(side="left", padx=(8, 4))
                 texto = d["ip"] + ("  (este PC)" if d["propia"] else "")
                 tk.Label(row, text=texto, bg=CARD, fg=TEXT, font=("Consolas", 9),
                          width=22, anchor="w").pack(side="left")
-                fabricante = OUI_CONOCIDOS.get(d["mac"][:8], "")
-                detalle = f"{d['mac']}  {fabricante}".strip() if d["mac"] else ""
-                tk.Label(row, text=detalle, bg=CARD, fg=MUTED,
-                         font=("Segoe UI", 8), anchor="w"
-                         ).pack(side="left", fill="x", expand=True)
+                fabricante = OUI_CONOCIDOS.get(d["mac"][:8], "") if d["mac"] else ""
+                partes_det = []
+                if es_dante:
+                    nombre_d = d["dante"]
+                    partes_det.append("Dante" if nombre_d == "Dante"
+                                      else f"Dante · {nombre_d}")
+                if d["mac"]:
+                    partes_det.append(d["mac"])
+                if fabricante:
+                    partes_det.append(fabricante)
+                tk.Label(row, text="   ".join(partes_det), bg=CARD,
+                         fg=ACCENT if es_dante else MUTED,
+                         font=("Segoe UI", 8, "bold" if es_dante else "normal"),
+                         anchor="w").pack(side="left", fill="x", expand=True)
                 if not d["propia"]:
                     tk.Button(row, text="Web", bg=CARD, fg=ERR, bd=0,
                               activebackground=CARD_HOVER, activeforeground=ERR,
