@@ -233,6 +233,9 @@ class MiniWidget:
         head.pack(fill="x", padx=10, pady=(7, 2))
         tk.Label(head, text="⚡ NetQuick", bg=BG, fg=TEXT,
                  font=("Segoe UI", 10, "bold")).pack(side="left")
+        tk.Label(head, text="beta", bg=BG, fg=ERR,
+                 font=("Segoe UI", 7, "italic")).pack(side="left",
+                                                      padx=(4, 0), pady=(3, 0))
 
         for txt, cmd, hover in (("✕", self.cerrar, ERR),
                                 ("⟳", lambda: self.refrescar(), TEXT),
@@ -336,7 +339,8 @@ class MiniWidget:
             pystray.MenuItem("Salir", self._tray_quit),
         )
         self.tray = pystray.Icon("NetQuickMini", self._tray_image(),
-                                 "NetQuick Mini — clic para mostrar/ocultar", menu)
+                                 "NetQuick (beta) — clic para mostrar/ocultar",
+                                 menu)
         threading.Thread(target=self.tray.run, daemon=True).start()
 
     def _tray_toggle(self, icon=None, item=None):
