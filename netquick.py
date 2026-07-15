@@ -5,14 +5,13 @@ NetQuick Mini — widget flotante, siempre encima, para cambiar red/IP al vuelo.
 - Campos con etiqueta clara (IP / Máscara / Gateway).
 - Rueda ⚙ con configuración: iniciar con Windows + perfiles guardados.
 - Perfiles: guarda combinaciones (ej. Casa / U / Trabajo) y aplícalas de 1 clic.
-- Sin ventana negra: lánzalo con NetQuickMini.vbs (usa pythonw.exe).
+- Sin ventana negra: lánzalo con NetQuick.vbs (usa pythonw.exe).
 - Icono en la bandeja del sistema: la ✕ oculta el widget; clic en el icono
   lo muestra de nuevo. "Salir" está en el menú del icono (clic derecho).
 """
 import ctypes
 import json
 import os
-import shutil
 import sys
 import threading
 import tkinter as tk
@@ -62,10 +61,10 @@ else:
     APP_DIR = HERE
 PROFILES_FILE = os.path.join(APP_DIR, "profiles.json")
 FIRSTRUN_FILE = os.path.join(APP_DIR, ".firstrun")
-VBS_SRC = os.path.join(HERE, "NetQuickMini.vbs")
+VBS_SRC = os.path.join(HERE, "NetQuick.vbs")
 STARTUP_DIR = os.path.join(os.environ.get("APPDATA", ""),
                            r"Microsoft\Windows\Start Menu\Programs\Startup")
-VBS_DST = os.path.join(STARTUP_DIR, "NetQuickMini.vbs")
+VBS_DST = os.path.join(STARTUP_DIR, "NetQuick.vbs")
 
 # Como .exe la app corre siempre elevada (manifest requireAdministrator):
 # así aplicar IP/DHCP nunca cierra ni relanza la ventana. El inicio con
@@ -142,8 +141,13 @@ def set_startup(on):
                 return bool(res and res.returncode == 0)
             netops.run(["schtasks", "/Delete", "/TN", TASK_NAME, "/F"])
             return True
-        if on and os.path.exists(VBS_SRC):
-            shutil.copyfile(VBS_SRC, VBS_DST)
+        if on:
+            # El .vbs de inicio lleva la ruta absoluta: copiar el portable
+            # rompería (resuelve mini rutas relativas a su propia carpeta).
+            script = os.path.join(HERE, "netquick.py")
+            with open(VBS_DST, "w", encoding="utf-8") as f:
+                f.write('CreateObject("WScript.Shell").Run '
+                        f'"pythonw ""{script}""", 0, False\r\n')
         elif not on and os.path.exists(VBS_DST):
             os.remove(VBS_DST)
         return True
@@ -341,7 +345,7 @@ class MiniWidget:
             pystray.MenuItem("Mostrar / Ocultar", self._tray_toggle, default=True),
             pystray.MenuItem("Salir", self._tray_quit),
         )
-        self.tray = pystray.Icon("NetQuickMini", self._tray_image(),
+        self.tray = pystray.Icon("NetQuick", self._tray_image(),
                                  "NetQuick (beta) — clic para mostrar/ocultar",
                                  menu)
         threading.Thread(target=self.tray.run, daemon=True).start()
@@ -686,7 +690,7 @@ class MiniWidget:
 
 def _ya_corriendo():
     """Evita instancias (e iconos de bandeja) duplicados."""
-    ctypes.windll.kernel32.CreateMutexW(None, False, "NetQuickMini_Instancia")
+    ctypes.windll.kernel32.CreateMutexW(None, False, "NetQuick_Instancia")
     return ctypes.windll.kernel32.GetLastError() == 183  # ERROR_ALREADY_EXISTS
 
 
