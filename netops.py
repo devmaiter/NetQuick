@@ -168,7 +168,7 @@ def get_config(nombre):
     DHCP y el gateway del registro (Tcpip\\Parameters\\Interfaces\\{GUID}).
     Funciona igual en cualquier idioma/configuración de Windows.
     """
-    info = {"dhcp": False, "ip": "", "mask": "", "gw": ""}
+    info = {"dhcp": False, "ip": "", "mask": "", "gw": "", "dns": ""}
     try:
         for d in psutil.net_if_addrs().get(nombre, []):
             if d.family.name == "AF_INET":
@@ -188,6 +188,13 @@ def get_config(nombre):
             clave_gw = "DhcpDefaultGateway" if info["dhcp"] else "DefaultGateway"
             try:
                 info["gw"] = _reg_ip(winreg.QueryValueEx(k, clave_gw)[0])
+            except OSError:
+                pass
+            # DNS: 'NameServer' (estático, "8.8.8.8,1.1.1.1") o 'DhcpNameServer'
+            clave_dns = "DhcpNameServer" if info["dhcp"] else "NameServer"
+            try:
+                dns = _reg_ip(winreg.QueryValueEx(k, clave_dns)[0])
+                info["dns"] = dns.replace(",", " ").split()[0] if dns else ""
             except OSError:
                 pass
     except OSError:
@@ -390,16 +397,19 @@ def scan_red(nombre, timeout_ms=250):
 
 
 # --- Aplicar configuración -------------------------------------------------
-def set_static(nombre, ip, mask, gw=None):
-    """Aplica IP estática. Devuelve (ok, mensaje)."""
+def set_static(nombre, ip, mask, gw=None, dns=None):
+    """Aplica IP estática (y DNS si se indica). Devuelve (ok, mensaje)."""
     ip, mask = ip.strip(), mask.strip()
     gw = gw.strip() if gw else ""
+    dns = dns.strip() if dns else ""
     if not ip_valida(ip):
         return False, f"IP no válida: {ip}"
     if not mascara_valida(mask):
         return False, f"Máscara no válida: {mask} (usa 255.255.255.0)"
     if gw and not ip_valida(gw):
         return False, f"Gateway no válido: {gw}"
+    if dns and not ip_valida(dns):
+        return False, f"DNS no válido: {dns}"
     if ip_en_uso(ip):
         return False, f"⚠ {ip} ya está en uso — no se aplicó nada"
     cmd = ["netsh", "interface", "ip", "set", "address", f"name={nombre}", "static", ip, mask]
@@ -410,12 +420,17 @@ def set_static(nombre, ip, mask, gw=None):
         detalle = ((res.stderr or res.stdout) or "").strip() if res else ""
         return False, (detalle or "Error (¿admin?)")
     avisos = []
+    if dns:
+        r2 = run(["netsh", "interface", "ip", "set", "dns",
+                  f"name={nombre}", "static", dns])
+        if not (r2 and r2.returncode == 0):
+            avisos.append("⚠ el DNS no se pudo aplicar")
     if gw:
         red = ipaddress.ip_network(f"{ip}/{mask}", strict=False)
         if ipaddress.IPv4Address(gw) not in red:
             avisos.append("⚠ gateway fuera de la subred")
-    log.info("set_static %s ip=%s mask=%s gw=%s %s",
-             nombre, ip, mask, gw, " ".join(avisos))
+    log.info("set_static %s ip=%s mask=%s gw=%s dns=%s %s",
+             nombre, ip, mask, gw, dns, " ".join(avisos))
     return True, "  ".join([f"IP {ip} aplicada"] + avisos)
 
 

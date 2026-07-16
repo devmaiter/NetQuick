@@ -278,20 +278,22 @@ class MiniWidget:
         body.pack(fill="x", padx=10)
 
         tk.Label(body, text="Interfaz de red", bg=BG, fg=MUTED,
-                 font=("Segoe UI", 8)).grid(row=0, column=0, columnspan=3, sticky="w")
+                 font=("Segoe UI", 8)).grid(row=0, column=0, columnspan=4, sticky="w")
         self.iface = ttk.Combobox(body, state="readonly", font=("Segoe UI", 9))
-        self.iface.grid(row=1, column=0, columnspan=3, sticky="we", pady=(0, 6))
+        self.iface.grid(row=1, column=0, columnspan=4, sticky="we", pady=(0, 6))
         self.iface.bind("<<ComboboxSelected>>", lambda e: self._iface_elegida())
 
         # Etiquetas claras encima de cada campo
-        for col, txt in ((0, "IP del equipo"), (1, "Máscara de subred"), (2, "Puerta de enlace")):
+        for col, txt in ((0, "IP del equipo"), (1, "Máscara de subred"),
+                         (2, "Puerta de enlace"), (3, "DNS (ej. 8.8.8.8)")):
             tk.Label(body, text=txt, bg=BG, fg=MUTED,
                      font=("Segoe UI", 8)).grid(row=2, column=col, sticky="w", padx=(0, 6))
 
         self.ip = self._entry(body); self.ip.grid(row=3, column=0, padx=(0, 6), sticky="we")
         self.mask = self._entry(body); self.mask.grid(row=3, column=1, padx=(0, 6), sticky="we")
-        self.gw = self._entry(body); self.gw.grid(row=3, column=2, sticky="we")
-        for c in range(3):
+        self.gw = self._entry(body); self.gw.grid(row=3, column=2, padx=(0, 6), sticky="we")
+        self.dns = self._entry(body); self.dns.grid(row=3, column=3, sticky="we")
+        for c in range(4):
             body.columnconfigure(c, weight=1)
 
         btns = tk.Frame(self.card, bg=BG)
@@ -307,7 +309,7 @@ class MiniWidget:
                                   command=self.aplicar_dhcp)
         self.btn_dhcp.pack(side="left", padx=6, ipadx=8, ipady=3)
         # Al editar IP/máscara/gateway, "Aplicar IP" se enciende (cambio pendiente)
-        for campo in (self.ip, self.mask, self.gw):
+        for campo in (self.ip, self.mask, self.gw, self.dns):
             campo.bind("<KeyRelease>", lambda e: self._update_mode_buttons())
 
     def _build_profiles(self):
@@ -436,15 +438,16 @@ class MiniWidget:
     def _on_iface(self):
         nombre = self._iface_name()
         cfg = netops.get_config(nombre) if nombre else \
-            {"dhcp": False, "ip": "", "mask": "", "gw": ""}
+            {"dhcp": False, "ip": "", "mask": "", "gw": "", "dns": ""}
         ip = cfg["ip"] or self._map.get(nombre, "")
         self._dhcp = cfg["dhcp"]
         self._put(self.ip, ip)
         self._put(self.mask, cfg["mask"] or "255.255.255.0")
         self._put(self.gw, cfg["gw"])
+        self._put(self.dns, cfg["dns"])
         # foto de lo aplicado: contra esto se detectan cambios pendientes
         self._aplicado = (self._val(self.ip), self._val(self.mask),
-                          self._val(self.gw))
+                          self._val(self.gw), self._val(self.dns))
         # Estado siempre visible: interfaz, IP con la que quedó y modo actual
         if nombre:
             modo = "Auto (DHCP)" if cfg["dhcp"] else "IP fija"
@@ -462,8 +465,9 @@ class MiniWidget:
         if not hasattr(self, "btn_aplicar"):
             return
         dhcp = getattr(self, "_dhcp", False)
-        campos = (self._val(self.ip), self._val(self.mask), self._val(self.gw))
-        pendiente = campos != getattr(self, "_aplicado", ("", "", ""))
+        campos = (self._val(self.ip), self._val(self.mask),
+                  self._val(self.gw), self._val(self.dns))
+        pendiente = campos != getattr(self, "_aplicado", ("", "", "", ""))
 
         if dhcp:
             self.btn_dhcp.config(text="✔ Auto (DHCP)", bg=ACCENT,
@@ -508,7 +512,7 @@ class MiniWidget:
             return
         ok, msg = netops.set_static(nombre, self._val(self.ip),
                                     self._val(self.mask) or "255.255.255.0",
-                                    self._val(self.gw))
+                                    self._val(self.gw), self._val(self.dns))
         self._msg(("✔ " if ok else "✗ ") + msg, OK if ok else ERR)
         if ok:
             self.refrescar()
@@ -532,6 +536,7 @@ class MiniWidget:
         self._put(self.ip, p.get("ip", ""))
         self._put(self.mask, p.get("mask", "255.255.255.0"))
         self._put(self.gw, p.get("gw", ""))
+        self._put(self.dns, p.get("dns", ""))
         self.aplicar_ip()
 
     # --- Escáner de dispositivos ---------------------------------------------
@@ -686,6 +691,8 @@ class MiniWidget:
             det = f"{nombre}:  {p.get('ip', '?')} / {p.get('mask', '?')}"
             if p.get("gw"):
                 det += f"  gw {p['gw']}"
+            if p.get("dns"):
+                det += f"  dns {p['dns']}"
             tk.Label(row, text=det, bg=CARD, fg=TEXT, font=("Segoe UI", 8),
                      anchor="w").pack(side="left", fill="x", expand=True, padx=8, pady=4)
             tk.Button(row, text="🗑", bg=CARD, fg=ERR, bd=0, activebackground=CARD,
@@ -701,6 +708,7 @@ class MiniWidget:
             "ip": self._val(self.ip),
             "mask": self._val(self.mask) or "255.255.255.0",
             "gw": self._val(self.gw),
+            "dns": self._val(self.dns),
         }
         save_profiles(self.profiles)
         self._render_config_profiles(win)
