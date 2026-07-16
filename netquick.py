@@ -60,6 +60,7 @@ if FROZEN:
 else:
     APP_DIR = HERE
 PROFILES_FILE = os.path.join(APP_DIR, "profiles.json")
+CONFIG_FILE = os.path.join(APP_DIR, "config.json")
 FIRSTRUN_FILE = os.path.join(APP_DIR, ".firstrun")
 VBS_SRC = os.path.join(HERE, "NetQuick.vbs")
 STARTUP_DIR = os.path.join(os.environ.get("APPDATA", ""),
@@ -115,6 +116,22 @@ def load_profiles():
 def save_profiles(data):
     with open(PROFILES_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
+
+
+def load_config():
+    try:
+        with open(CONFIG_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_config(data):
+    try:
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+    except OSError:
+        pass
 
 
 # --- Inicio con Windows ----------------------------------------------------
@@ -201,6 +218,7 @@ class MiniWidget:
         self.root.attributes("-topmost", True)
         self.root.configure(bg=ACCENT)
         self.profiles = load_profiles()
+        self.config = load_config()
         self._map = {}
         self._display = {}
 
@@ -263,7 +281,7 @@ class MiniWidget:
                  font=("Segoe UI", 8)).grid(row=0, column=0, columnspan=3, sticky="w")
         self.iface = ttk.Combobox(body, state="readonly", font=("Segoe UI", 9))
         self.iface.grid(row=1, column=0, columnspan=3, sticky="we", pady=(0, 6))
-        self.iface.bind("<<ComboboxSelected>>", lambda e: self._on_iface())
+        self.iface.bind("<<ComboboxSelected>>", lambda e: self._iface_elegida())
 
         # Etiquetas claras encima de cada campo
         for col, txt in ((0, "IP del equipo"), (1, "Máscara de subred"), (2, "Puerta de enlace")):
@@ -387,6 +405,15 @@ class MiniWidget:
         """Nombre real de la interfaz elegida (el combo muestra 'nombre — IP')."""
         return self._display.get(self.iface.get(), self.iface.get())
 
+    def _iface_elegida(self):
+        """El usuario eligió interfaz en el combo: recordarla para el próximo
+        arranque (solo la elección explícita, no la selección automática)."""
+        nombre = self._iface_name()
+        if nombre and nombre != self.config.get("ultima_interfaz"):
+            self.config["ultima_interfaz"] = nombre
+            save_config(self.config)
+        self._on_iface()
+
     def refrescar(self, select_default=False):
         ifaces = netops.list_interfaces()
         actual = self._iface_name()
@@ -396,7 +423,10 @@ class MiniWidget:
         self.iface["values"] = list(self._display.keys())
         nombres = list(self._map.keys())
         if nombres and (select_default or actual not in self._map):
-            actual = next((n for n in nombres if n.startswith("NETLAB-")), nombres[0])
+            # Volver a la última interfaz que usó el usuario; si ya no existe,
+            # la primera activa.
+            ultima = self.config.get("ultima_interfaz", "")
+            actual = ultima if ultima in self._map else nombres[0]
         for disp, n in self._display.items():
             if n == actual:
                 self.iface.set(disp)
