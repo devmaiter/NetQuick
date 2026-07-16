@@ -7,14 +7,34 @@ Operaciones de red compartidas para NetQuick (usadas por el mini-widget).
 """
 import ctypes
 import ipaddress
+import logging
 import os
 import subprocess
 import sys
 import winreg
+from logging.handlers import RotatingFileHandler
 
 import psutil
 
 _NO_WINDOW = 0x08000000  # CREATE_NO_WINDOW
+
+# --- Log a archivo -----------------------------------------------------------
+# Para diagnosticar en máquinas ajenas: %LOCALAPPDATA%\NetQuick\netquick.log
+LOG_DIR = os.path.join(os.environ.get("LOCALAPPDATA")
+                       or os.path.expanduser("~"), "NetQuick")
+LOG_FILE = os.path.join(LOG_DIR, "netquick.log")
+
+log = logging.getLogger("netquick")
+if not log.handlers:
+    log.setLevel(logging.INFO)
+    try:
+        os.makedirs(LOG_DIR, exist_ok=True)
+        _h = RotatingFileHandler(LOG_FILE, maxBytes=256 * 1024,
+                                 backupCount=1, encoding="utf-8")
+        _h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+        log.addHandler(_h)
+    except OSError:
+        log.addHandler(logging.NullHandler())
 
 
 def _hidden_startupinfo():
@@ -38,8 +58,11 @@ def _decodificar(b):
     return b.decode("utf-8", errors="replace")
 
 
-def run(cmd):
-    """Ejecuta un comando (lista) sin mostrar ninguna ventana."""
+def run(cmd, quiet=False):
+    """Ejecuta un comando (lista) sin mostrar ninguna ventana.
+
+    quiet: no registrar el fallo en el log (para comandos cuyo error es
+    normal, como el ping a una IP libre)."""
     try:
         res = subprocess.run(
             cmd, capture_output=True,
@@ -47,8 +70,12 @@ def run(cmd):
         )
         res.stdout = _decodificar(res.stdout)
         res.stderr = _decodificar(res.stderr)
+        if res.returncode != 0 and not quiet:
+            log.warning("cmd %s -> %s: %s", cmd, res.returncode,
+                        (res.stderr or res.stdout).strip())
         return res
     except Exception:
+        log.exception("cmd %s no se pudo ejecutar", cmd)
         return None
 
 
@@ -189,7 +216,7 @@ def ip_en_uso(ip):
     for i in list_interfaces():
         if i["ip"] == ip:
             return False
-    res = run(["ping", "-n", "1", "-w", "400", ip])
+    res = run(["ping", "-n", "1", "-w", "400", ip], quiet=True)
     # returncode 0 con "unreachable" también existe: exigir respuesta real (TTL)
     if res and res.returncode == 0 and "ttl=" in (res.stdout or "").lower():
         return True
@@ -311,7 +338,7 @@ def scan_red(nombre, timeout_ms=250):
 
     if red.num_addresses <= 1024:
         def _ping(ip):
-            run(["ping", "-n", "1", "-w", str(timeout_ms), str(ip)])
+            run(["ping", "-n", "1", "-w", str(timeout_ms), str(ip)], quiet=True)
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=64) as ex:
             list(ex.map(_ping, red.hosts()))
@@ -369,8 +396,9 @@ def set_static(nombre, ip, mask, gw=None):
         cmd += [gw, "1"]
     res = run(cmd)
     if res and res.returncode == 0:
+        log.info("set_static %s ip=%s mask=%s gw=%s", nombre, ip, mask, gw)
         return True, f"IP {ip} aplicada"
-    detalle = ((res.stdout or "") + (res.stderr or "")).strip() if res else ""
+    detalle = ((res.stderr or res.stdout) or "").strip() if res else ""
     return False, (detalle or "Error (¿admin?)")
 
 
@@ -379,6 +407,7 @@ def set_dhcp(nombre):
     r1 = run(["netsh", "interface", "ip", "set", "address", f"name={nombre}", "dhcp"])
     run(["netsh", "interface", "ip", "set", "dns", f"name={nombre}", "dhcp"])
     if r1 and r1.returncode == 0:
+        log.info("set_dhcp %s", nombre)
         return True, "DHCP activado"
-    detalle = ((r1.stdout or "") + (r1.stderr or "")).strip() if r1 else ""
+    detalle = ((r1.stderr or r1.stdout) or "").strip() if r1 else ""
     return False, (detalle or "Error (¿admin?)")
