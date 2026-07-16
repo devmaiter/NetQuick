@@ -1,8 +1,9 @@
 # NetQuick — Reglas para agentes
 
 ## Identidad de git (OBLIGATORIO)
-- Commitear SIEMPRE como `devmaiter <f1000161620@gmail.com>` (el correo de la
-  cuenta de GitHub del dueño). No usar otro correo ni otra identidad.
+- Commitear SIEMPRE como `devmaiter <89703920+devmaiter@users.noreply.github.com>`
+  (el correo noreply de GitHub del dueño — nunca publicar correos personales).
+  No usar otro correo ni otra identidad.
 - PROHIBIDO cualquier atribución de IA en commits, PRs o issues: nada de
   `Co-Authored-By: Claude ...`, `Generated with Claude Code`, enlaces
   `Claude-Session`, ni ramas `claude/*`. El dueño del proyecto lo exige.
