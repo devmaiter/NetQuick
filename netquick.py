@@ -120,7 +120,7 @@ def save_profiles(data):
 # --- Inicio con Windows ----------------------------------------------------
 def in_startup():
     if FROZEN:
-        res = netops.run(["schtasks", "/Query", "/TN", TASK_NAME])
+        res = netops.run(["schtasks", "/Query", "/TN", TASK_NAME], quiet=True)
         return bool(res and res.returncode == 0)
     return os.path.exists(VBS_DST)
 
@@ -161,7 +161,7 @@ def _regla_firewall():
     equipos Dante hacia el puerto efímero del escáner. Idempotente: borra la
     regla anterior por si el exe cambió de ruta."""
     netops.run(["netsh", "advfirewall", "firewall", "delete", "rule",
-                "name=NetQuick"])
+                "name=NetQuick"], quiet=True)
     netops.run(["netsh", "advfirewall", "firewall", "add", "rule",
                 "name=NetQuick", "dir=in", "action=allow",
                 f"program={sys.executable}", "profile=any", "enable=yes"])
