@@ -204,6 +204,17 @@ def ip_valida(valor):
         return False
 
 
+def mascara_valida(valor):
+    """True solo para máscaras de subred reales: unos contiguos y luego ceros
+    (255.255.255.0 sí; 1.2.3.4 o 255.7.0.255 no — netsh fallaría después
+    con un error críptico)."""
+    valor = str(valor).strip()
+    if not ip_valida(valor):
+        return False
+    m = int(ipaddress.IPv4Address(valor))
+    return m != 0 and (m | (m - 1)) == 0xFFFFFFFF
+
+
 # --- Detección de conflictos -----------------------------------------------
 def ip_en_uso(ip):
     """True si otro dispositivo de la red ya responde en esa IP.
@@ -385,8 +396,8 @@ def set_static(nombre, ip, mask, gw=None):
     gw = gw.strip() if gw else ""
     if not ip_valida(ip):
         return False, f"IP no válida: {ip}"
-    if not ip_valida(mask):
-        return False, "Máscara no válida (usa 255.255.255.0)"
+    if not mascara_valida(mask):
+        return False, f"Máscara no válida: {mask} (usa 255.255.255.0)"
     if gw and not ip_valida(gw):
         return False, f"Gateway no válido: {gw}"
     if ip_en_uso(ip):
@@ -395,11 +406,17 @@ def set_static(nombre, ip, mask, gw=None):
     if gw:
         cmd += [gw, "1"]
     res = run(cmd)
-    if res and res.returncode == 0:
-        log.info("set_static %s ip=%s mask=%s gw=%s", nombre, ip, mask, gw)
-        return True, f"IP {ip} aplicada"
-    detalle = ((res.stderr or res.stdout) or "").strip() if res else ""
-    return False, (detalle or "Error (¿admin?)")
+    if not (res and res.returncode == 0):
+        detalle = ((res.stderr or res.stdout) or "").strip() if res else ""
+        return False, (detalle or "Error (¿admin?)")
+    avisos = []
+    if gw:
+        red = ipaddress.ip_network(f"{ip}/{mask}", strict=False)
+        if ipaddress.IPv4Address(gw) not in red:
+            avisos.append("⚠ gateway fuera de la subred")
+    log.info("set_static %s ip=%s mask=%s gw=%s %s",
+             nombre, ip, mask, gw, " ".join(avisos))
+    return True, "  ".join([f"IP {ip} aplicada"] + avisos)
 
 
 def set_dhcp(nombre):
