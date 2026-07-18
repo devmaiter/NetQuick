@@ -22,7 +22,7 @@ from tkinter import ttk
 
 import netops
 
-__version__ = "1.2.1-beta"
+__version__ = "1.2.2-beta"
 
 try:
     import pystray
