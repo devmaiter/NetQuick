@@ -3,7 +3,7 @@
 Historial de cambios de NetQuick. La versión del código vive en
 `netquick.py` (`__version__`) y es la única fuente de verdad.
 
-## [Sin publicar]
+## [1.2.2-beta] — 2026-07-18
 
 - Una interfaz con error ya no tumba la lista completa de adaptadores.
 - Conciencia de DPI: el widget se ve nítido con escalado de Windows (125/150 %).
