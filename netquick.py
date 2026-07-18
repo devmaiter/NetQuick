@@ -9,6 +9,7 @@ NetQuick Mini — widget flotante, siempre encima, para cambiar red/IP al vuelo.
 - Icono en la bandeja del sistema: la ✕ oculta el widget; clic en el icono
   lo muestra de nuevo. "Salir" está en el menú del icono (clic derecho).
 """
+import argparse
 import ctypes
 import json
 import os
@@ -20,6 +21,8 @@ import winreg
 from tkinter import ttk
 
 import netops
+
+__version__ = "1.2.1-beta"
 
 try:
     import pystray
@@ -159,12 +162,13 @@ def set_startup(on):
             netops.run(["schtasks", "/Delete", "/TN", TASK_NAME, "/F"])
             return True
         if on:
-            # El .vbs de inicio lleva la ruta absoluta: copiar el portable
-            # rompería (resuelve mini rutas relativas a su propia carpeta).
+            # El .vbs de inicio lleva rutas absolutas (script Y pythonw): si
+            # pythonw no está en el PATH, un "pythonw" a secas falla silencioso.
             script = os.path.join(HERE, "netquick.py")
+            pyw = netops.pythonw()
             with open(VBS_DST, "w", encoding="utf-8") as f:
                 f.write('CreateObject("WScript.Shell").Run '
-                        f'"pythonw ""{script}""", 0, False\r\n')
+                        f'"""{pyw}"" ""{script}""", 0, False\r\n')
         elif not on and os.path.exists(VBS_DST):
             os.remove(VBS_DST)
         return True
@@ -238,6 +242,7 @@ class MiniWidget:
                  ).pack(fill="x", padx=12, pady=(0, 5))
 
         self.refrescar(select_default=True)
+        self._repoblar_tras_relanzar()
         self._place_bottom_right()
         self.tray = None
         if TRAY_DISPONIBLE:
@@ -258,7 +263,7 @@ class MiniWidget:
         head.pack(fill="x", padx=10, pady=(7, 2))
         tk.Label(head, text="⚡ NetQuick", bg=BG, fg=TEXT,
                  font=("Segoe UI", 10, "bold")).pack(side="left")
-        tk.Label(head, text="beta", bg=BG, fg=ERR,
+        tk.Label(head, text=f"v{__version__}", bg=BG, fg=ERR,
                  font=("Segoe UI", 7, "italic")).pack(side="left",
                                                       padx=(4, 0), pady=(3, 0))
 
@@ -366,7 +371,7 @@ class MiniWidget:
             pystray.MenuItem("Salir", self._tray_quit),
         )
         self.tray = pystray.Icon("NetQuick", self._tray_image(),
-                                 "NetQuick (beta) — clic para mostrar/ocultar",
+                                 f"NetQuick v{__version__} — clic para mostrar/ocultar",
                                  menu)
         threading.Thread(target=self.tray.run, daemon=True).start()
 
@@ -497,11 +502,33 @@ class MiniWidget:
     def _msg(self, texto, color=MUTED):
         self.status.config(text=texto, fg=color)
 
+    def _repoblar_tras_relanzar(self):
+        """Si venimos de un relanzamiento como admin, restaurar la interfaz
+        elegida y lo que el usuario había tecleado (issue #17)."""
+        pend = _args_relanzamiento()
+        if not (pend.ip or pend.mask or pend.gw):
+            return
+        if pend.iface:
+            for disp, n in self._display.items():
+                if n == pend.iface:
+                    self.iface.set(disp)
+                    self._on_iface()
+                    break
+        self._put(self.ip, pend.ip)
+        self._put(self.mask, pend.mask)
+        self._put(self.gw, pend.gw)
+        self._update_mode_buttons()
+
     def _ensure_admin(self):
         if netops.is_admin():
             return True
         self._msg("Pidiendo permisos de administrador…", MUTED)
-        netops.relaunch_as_admin(__file__)
+        netops.relaunch_as_admin(__file__, {
+            "--iface": self._iface_name(),
+            "--ip": self._val(self.ip),
+            "--mask": self._val(self.mask),
+            "--gw": self._val(self.gw),
+        })
         return False
 
     def aplicar_ip(self):
@@ -732,7 +759,30 @@ def _ya_corriendo():
     return ctypes.windll.kernel32.GetLastError() == 183  # ERROR_ALREADY_EXISTS
 
 
+def _dpi_awareness():
+    """Con escalado de Windows (125/150 %) Tkinter se ve borroso si el proceso
+    no declara conciencia de DPI. Declararla ANTES de crear la ventana."""
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)
+    except (AttributeError, OSError):
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except (AttributeError, OSError):
+            pass
+
+
+def _args_relanzamiento():
+    """Valores que venían tecleados cuando la app se relanzó como admin
+    (issue #17): se reciben por argumentos y se repueblan al arrancar."""
+    p = argparse.ArgumentParser(add_help=False)
+    for flag in ("--iface", "--ip", "--mask", "--gw"):
+        p.add_argument(flag, default="")
+    ns, _ = p.parse_known_args()
+    return ns
+
+
 if __name__ == "__main__":
     if not _ya_corriendo():
+        _dpi_awareness()
         primer_arranque_exe()
         MiniWidget()
