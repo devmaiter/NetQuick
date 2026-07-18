@@ -30,6 +30,7 @@
 | Instalar desde fuente (sin .exe) | `irm https://raw.githubusercontent.com/devmaiter/NetQuick/main/install-src.ps1 \| iex` |
 | Repo ya clonado (desarrollo) | `.\setup.ps1` y luego doble clic en `NetQuick.vbs` |
 | Directo con Python | `pythonw netquick.py` |
+| **Desinstalar** | `irm https://raw.githubusercontent.com/devmaiter/NetQuick/main/uninstall.ps1 \| iex` |
 
 Tras instalar, abre una terminal nueva y escribe **`netquick`**, o usa el acceso directo del Escritorio.
 
@@ -46,7 +47,10 @@ Tras instalar, abre una terminal nueva y escribe **`netquick`**, o usa el acceso
 | `NetQuick.vbs` | Lanzador sin ventana de consola (doble clic) |
 | `NetQuick.spec` | Empaquetado del `.exe` con PyInstaller |
 | `install.ps1` / `install-src.ps1` | Instaladores por terminal (`irm ... \| iex`) |
+| `uninstall.ps1` | Desinstalador (revierte archivos, PATH, accesos e inicio con Windows) |
 | `setup.ps1` | Setup de desarrollo (instala dependencias) |
+| `tests/` | Tests de `netops` (pytest, corren en CI) |
+| `CHANGELOG.md` | Historial de cambios |
 
 ---
 
@@ -73,6 +77,8 @@ pyinstaller NetQuick.spec
 ```
 
 > **Nota:** Windows (Defender / Smart App Control) puede bloquear el `.exe` por no estar firmado. Ejecutar desde fuente (`pythonw netquick.py`) no tiene ese problema.
+
+Los `.exe` oficiales se compilan automáticamente en GitHub Actions al crear un tag `v*`, y cada release publica el **hash SHA256** del ejecutable para que puedas verificar tu descarga: `Get-FileHash NetQuick.exe -Algorithm SHA256`.
 
 ---
 
