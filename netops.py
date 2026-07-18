@@ -93,37 +93,50 @@ def pythonw():
     return cand if os.path.exists(cand) else sys.executable
 
 
-def relaunch_as_admin(script):
+def relaunch_as_admin(script, extra=None):
     """Reinicia la app como administrador (sin ventana negra).
 
     Empaquetado como .exe (PyInstaller): relanzar el propio .exe.
     En desarrollo: relanzar el script con pythonw.
+
+    extra: dict opcional {"--flag": valor} que se reenvía al proceso nuevo
+    para no perder lo que el usuario ya había tecleado (issue #17).
     """
     if getattr(sys, "frozen", False):
         ctypes.windll.shell32.ShellExecuteW(
             None, "runas", sys.executable, None, None, 1
         )
     else:
+        params = f'"{os.path.abspath(script)}"'
+        for flag, valor in (extra or {}).items():
+            if valor:
+                params += f' {flag} "{valor}"'
         ctypes.windll.shell32.ShellExecuteW(
-            None, "runas", pythonw(), f'"{os.path.abspath(script)}"', None, 1
+            None, "runas", pythonw(), params, None, 1
         )
     sys.exit(0)
 
 
 # --- Consulta de interfaces ------------------------------------------------
 def list_interfaces():
-    """Devuelve [{'nombre', 'ip'}] de las interfaces activas (sin loopback 'lo')."""
+    """Devuelve [{'nombre', 'ip'}] de las interfaces activas (sin loopback 'lo').
+
+    El try va POR interfaz: una interfaz rara (driver a medias, adaptador
+    virtual roto) se salta sola sin tumbar la lista completa."""
     data = []
     try:
         addrs = psutil.net_if_addrs()
         stats = psutil.net_if_stats()
-        for nombre, direcc in addrs.items():
+    except Exception:
+        return data
+    for nombre, direcc in addrs.items():
+        try:
             st = stats.get(nombre)
             if st and st.isup and not nombre.lower().startswith("lo"):
                 ip = next((d.address for d in direcc if d.family.name == "AF_INET"), "")
                 data.append({"nombre": nombre, "ip": ip})
-    except Exception:
-        pass
+        except Exception:
+            continue
     return data
 
 
