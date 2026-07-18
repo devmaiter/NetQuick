@@ -5,6 +5,10 @@ Historial de cambios de NetQuick. La versión del código vive en
 
 ## [1.2.2-beta] — 2026-07-18
 
+- Campo DNS al aplicar IP estática — adiós al "tengo IP pero no internet".
+- Validación real de la máscara de subred y aviso de gateway fuera de subred.
+- Se recuerda la última interfaz elegida (fuera el `NETLAB-` fijo en el código).
+- Log de diagnóstico en `%LOCALAPPDATA%\NetQuick` y errores de netsh con causa real.
 - Una interfaz con error ya no tumba la lista completa de adaptadores.
 - Conciencia de DPI: el widget se ve nítido con escalado de Windows (125/150 %).
 - Al relanzar como administrador (modo fuente) ya no se pierden los valores tecleados.
