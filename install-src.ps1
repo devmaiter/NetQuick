@@ -10,7 +10,7 @@ $ErrorActionPreference = "Stop"
 $repo   = "devmaiter/NetQuick"
 $branch = "main"
 $dest   = "$env:LOCALAPPDATA\NetQuick"
-$files  = @("netquick.py", "netops.py", "NetQuick.vbs", "requirements.txt")
+$files  = @("netquick.py", "netops.py", "requirements.txt")
 
 Write-Host ""
 Write-Host "  NetQuick - Instalacion desde fuente" -ForegroundColor Cyan
@@ -49,9 +49,23 @@ Write-Host "  Instalando dependencias..." -ForegroundColor Gray
 & $py -m pip install --quiet --upgrade pip
 & $py -m pip install --quiet -r "$dest\requirements.txt"
 
-# 4) Lanzador .cmd para escribir "netquick" en la terminal
+# 4) Lanzadores con la ruta REAL de pythonw.exe (no dependen del PATH).
+#    "pythonw" a secas falla silencioso si el equipo tiene "py" pero no
+#    "pythonw" en el PATH (issue #12).
+$realPy  = (& $py -c "import sys; print(sys.executable)").Trim()
+$pythonw = Join-Path (Split-Path $realPy) "pythonw.exe"
+if (-not (Test-Path $pythonw)) { $pythonw = $realPy }  # ultimo recurso: con consola
+
 $launcher = "$dest\netquick.cmd"
-"@echo off`r`nstart `"`" pythonw `"$dest\netquick.py`" %*" | Set-Content -Path $launcher -Encoding ASCII
+"@echo off`r`nstart `"`" `"$pythonw`" `"$dest\netquick.py`" %*" | Set-Content -Path $launcher -Encoding ASCII
+
+# Lanzador .vbs de doble clic, generado con rutas absolutas
+$vbsContent = @"
+' Lanzador generado por install-src.ps1 (rutas absolutas, no depende del PATH)
+Set sh = CreateObject("WScript.Shell")
+sh.Run """$pythonw"" ""$dest\netquick.py""", 0, False
+"@
+Set-Content -Path "$dest\NetQuick.vbs" -Value $vbsContent -Encoding ASCII
 
 # 5) Anadir al PATH del usuario
 $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
