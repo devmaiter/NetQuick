@@ -1,0 +1,44 @@
+name: Release
+
+# Al crear un tag v* se compila el .exe y se publica el release con su
+# hash SHA256 (mitiga la desconfianza de Defender/SmartScreen: cualquiera
+# puede verificar que el .exe descargado es el que produjo este build).
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+      - name: Compilar NetQuick.exe
+        run: pyinstaller NetQuick.spec
+      - name: Publicar release con hash SHA256
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $hash = (Get-FileHash dist/NetQuick.exe -Algorithm SHA256).Hash.ToLower()
+          $notas = @(
+            "Build automatico del tag $env:GITHUB_REF_NAME (commit $($env:GITHUB_SHA.Substring(0,7)))."
+            ""
+            "Verificacion del ejecutable:"
+            '```'
+            "SHA256  $hash  NetQuick.exe"
+            '```'
+            "En PowerShell: ``Get-FileHash NetQuick.exe -Algorithm SHA256``"
+          )
+          Set-Content -Path notes.md -Value $notas
+          gh release create $env:GITHUB_REF_NAME dist/NetQuick.exe `
+            --title "NetQuick $env:GITHUB_REF_NAME" --notes-file notes.md
