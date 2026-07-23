@@ -10,17 +10,15 @@ NetQuick Mini — widget flotante, siempre encima, para cambiar red/IP al vuelo.
   lo muestra de nuevo. "Salir" está en el menú del icono (clic derecho).
 """
 import argparse
-import ctypes
 import json
 import os
-import sys
 import threading
 import tkinter as tk
 import webbrowser
-import winreg
 from tkinter import ttk
 
 import netops
+import winsetup
 
 __version__ = "1.2.2-beta"
 
@@ -53,58 +51,10 @@ OUI_CONOCIDOS = {
     "dc-a6-32": "Raspberry Pi",
 }
 
-# Empaquetado con PyInstaller: __file__ apunta a una carpeta temporal, así que
-# los datos del usuario (perfiles) van a %APPDATA%\NetQuick.
-FROZEN = getattr(sys, "frozen", False)
-HERE = os.path.dirname(os.path.abspath(sys.executable if FROZEN else __file__))
-if FROZEN:
-    APP_DIR = os.path.join(os.environ.get("APPDATA", HERE), "NetQuick")
-    os.makedirs(APP_DIR, exist_ok=True)
-else:
-    APP_DIR = HERE
-PROFILES_FILE = os.path.join(APP_DIR, "profiles.json")
-CONFIG_FILE = os.path.join(APP_DIR, "config.json")
-FIRSTRUN_FILE = os.path.join(APP_DIR, ".firstrun")
-VBS_SRC = os.path.join(HERE, "NetQuick.vbs")
-STARTUP_DIR = os.path.join(os.environ.get("APPDATA", ""),
-                           r"Microsoft\Windows\Start Menu\Programs\Startup")
-VBS_DST = os.path.join(STARTUP_DIR, "NetQuick.vbs")
-
-# Como .exe la app corre siempre elevada (manifest requireAdministrator):
-# así aplicar IP/DHCP nunca cierra ni relanza la ventana. El inicio con
-# Windows usa una tarea programada con privilegios (RunLevel Highest), que
-# arranca elevada al iniciar sesión SIN mostrar UAC.
-TASK_NAME = "NetQuick"
-# Clave Run de versiones anteriores (solo para migrar/limpiar)
-RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
-RUN_NAME = "NetQuick"
-
-
-def _task_xml(exe):
-    """XML de la tarea programada: al iniciar sesión, elevada, sin límites
-    de batería ni de tiempo (las opciones por defecto de schtasks los ponen)."""
-    return f"""<?xml version="1.0" encoding="UTF-16"?>
-<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-  <Triggers>
-    <LogonTrigger><Enabled>true</Enabled></LogonTrigger>
-  </Triggers>
-  <Principals>
-    <Principal id="Author">
-      <LogonType>InteractiveToken</LogonType>
-      <RunLevel>HighestAvailable</RunLevel>
-    </Principal>
-  </Principals>
-  <Settings>
-    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
-    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
-    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
-    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
-    <StartWhenAvailable>true</StartWhenAvailable>
-  </Settings>
-  <Actions Context="Author">
-    <Exec><Command>{exe}</Command></Exec>
-  </Actions>
-</Task>"""
+# Los perfiles y la configuración viven junto a la app en desarrollo y en
+# %APPDATA%\NetQuick empaquetado como exe (lo decide winsetup.APP_DIR).
+PROFILES_FILE = os.path.join(winsetup.APP_DIR, "profiles.json")
+CONFIG_FILE = os.path.join(winsetup.APP_DIR, "config.json")
 
 
 # --- Persistencia de perfiles ----------------------------------------------
@@ -134,84 +84,6 @@ def save_config(data):
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
     except OSError:
-        pass
-
-
-# --- Inicio con Windows ----------------------------------------------------
-def in_startup():
-    if FROZEN:
-        res = netops.run(["schtasks", "/Query", "/TN", TASK_NAME], quiet=True)
-        return bool(res and res.returncode == 0)
-    return os.path.exists(VBS_DST)
-
-
-def set_startup(on):
-    try:
-        if FROZEN:
-            if on:
-                xml_path = os.path.join(APP_DIR, "task.xml")
-                with open(xml_path, "w", encoding="utf-16") as f:
-                    f.write(_task_xml(sys.executable))
-                res = netops.run(["schtasks", "/Create", "/TN", TASK_NAME,
-                                  "/XML", xml_path, "/F"])
-                try:
-                    os.remove(xml_path)
-                except OSError:
-                    pass
-                return bool(res and res.returncode == 0)
-            netops.run(["schtasks", "/Delete", "/TN", TASK_NAME, "/F"])
-            return True
-        if on:
-            # El .vbs de inicio lleva rutas absolutas (script Y pythonw): si
-            # pythonw no está en el PATH, un "pythonw" a secas falla silencioso.
-            script = os.path.join(HERE, "netquick.py")
-            pyw = netops.pythonw()
-            with open(VBS_DST, "w", encoding="utf-8") as f:
-                f.write('CreateObject("WScript.Shell").Run '
-                        f'"""{pyw}"" ""{script}""", 0, False\r\n')
-        elif not on and os.path.exists(VBS_DST):
-            os.remove(VBS_DST)
-        return True
-    except Exception:
-        return False
-
-
-def _regla_firewall():
-    """Regla de firewall para el exe (como hace Dante Controller al
-    instalarse): sin ella Windows bloquea las respuestas mDNS unicast de los
-    equipos Dante hacia el puerto efímero del escáner. Idempotente: borra la
-    regla anterior por si el exe cambió de ruta."""
-    netops.run(["netsh", "advfirewall", "firewall", "delete", "rule",
-                "name=NetQuick"], quiet=True)
-    netops.run(["netsh", "advfirewall", "firewall", "add", "rule",
-                "name=NetQuick", "dir=in", "action=allow",
-                f"program={sys.executable}", "profile=any", "enable=yes"])
-
-
-def primer_arranque_exe():
-    """La primera vez que corre el .exe se auto-registra para iniciar con
-    Windows (queda siempre en la bandeja). Solo una vez: si el usuario lo
-    desactiva en ⚙, se respeta su elección."""
-    if not FROZEN:
-        return
-    _regla_firewall()
-    # Migrar instalaciones previas: quitar la clave Run (arrancaba sin
-    # permisos) y sustituirla por la tarea programada elevada.
-    try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0,
-                            winreg.KEY_ALL_ACCESS) as k:
-            winreg.QueryValueEx(k, RUN_NAME)
-            winreg.DeleteValue(k, RUN_NAME)
-            set_startup(True)
-    except OSError:
-        pass
-    if os.path.exists(FIRSTRUN_FILE):
-        return
-    set_startup(True)
-    try:
-        with open(FIRSTRUN_FILE, "w") as f:
-            f.write("ok")
-    except Exception:
         pass
 
 
@@ -675,7 +547,7 @@ class MiniWidget:
                  font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=16, pady=(14, 8))
 
         # Inicio con Windows
-        self.startup_var = tk.BooleanVar(value=in_startup())
+        self.startup_var = tk.BooleanVar(value=winsetup.in_startup())
         chk = tk.Checkbutton(win, text="Iniciar con Windows (siempre visible)",
                              variable=self.startup_var, bg=BG, fg=TEXT,
                              selectcolor=CARD, activebackground=BG, activeforeground=TEXT,
@@ -753,27 +625,9 @@ class MiniWidget:
         self._render_profiles()
 
     def _toggle_startup(self, win):
-        ok = set_startup(self.startup_var.get())
+        ok = winsetup.set_startup(self.startup_var.get())
         if not ok:
-            self.startup_var.set(in_startup())
-
-
-def _ya_corriendo():
-    """Evita instancias (e iconos de bandeja) duplicados."""
-    ctypes.windll.kernel32.CreateMutexW(None, False, "NetQuick_Instancia")
-    return ctypes.windll.kernel32.GetLastError() == 183  # ERROR_ALREADY_EXISTS
-
-
-def _dpi_awareness():
-    """Con escalado de Windows (125/150 %) Tkinter se ve borroso si el proceso
-    no declara conciencia de DPI. Declararla ANTES de crear la ventana."""
-    try:
-        ctypes.windll.shcore.SetProcessDpiAwareness(1)
-    except (AttributeError, OSError):
-        try:
-            ctypes.windll.user32.SetProcessDPIAware()
-        except (AttributeError, OSError):
-            pass
+            self.startup_var.set(winsetup.in_startup())
 
 
 def _args_relanzamiento():
@@ -787,7 +641,7 @@ def _args_relanzamiento():
 
 
 if __name__ == "__main__":
-    if not _ya_corriendo():
-        _dpi_awareness()
-        primer_arranque_exe()
+    if not winsetup.ya_corriendo():
+        winsetup.dpi_awareness()
+        winsetup.primer_arranque_exe()
         MiniWidget().run()
