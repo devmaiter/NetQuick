@@ -179,6 +179,37 @@ def test_fabricante_mac(mac, esperado):
     assert netops.fabricante_mac(mac) == esperado
 
 
+# --- Observabilidad: cada intento se loggea (cierra el sesgo de la Fase 5) ---
+class _RunFalso:
+    def __init__(self, rc, out=""):
+        self.returncode, self.stdout, self.stderr = rc, out, ""
+
+
+def test_set_static_loggea_rechazo_de_validacion(monkeypatch, caplog):
+    with caplog.at_level("INFO", logger="netquick"):
+        netops.set_static("Ethernet", "no-es-ip", "255.255.255.0")
+    linea = "".join(r.message for r in caplog.records)
+    assert "op=set_static" in linea and "resultado=rechazo" in linea
+
+
+def test_set_static_loggea_error_de_netsh(monkeypatch, caplog):
+    monkeypatch.setattr(netops, "ip_en_uso", lambda ip: False)
+    monkeypatch.setattr(netops, "run", lambda cmd, quiet=False: _RunFalso(1, "denegado"))
+    with caplog.at_level("INFO", logger="netquick"):
+        netops.set_static("Ethernet", "10.0.0.5", "255.255.255.0")
+    linea = "".join(r.message for r in caplog.records)
+    assert "resultado=error" in linea
+
+
+def test_set_static_loggea_ok_con_duracion(monkeypatch, caplog):
+    monkeypatch.setattr(netops, "ip_en_uso", lambda ip: False)
+    monkeypatch.setattr(netops, "run", lambda cmd, quiet=False: _RunFalso(0))
+    with caplog.at_level("INFO", logger="netquick"):
+        netops.set_static("Ethernet", "10.0.0.5", "255.255.255.0")
+    linea = "".join(r.message for r in caplog.records)
+    assert "resultado=ok" in linea and "dur_ms=" in linea
+
+
 # --- Estrategias -------------------------------------------------------------
 class _OpsRegistro:
     """Doble mínimo: registra qué operación se pidió y con qué argumentos."""

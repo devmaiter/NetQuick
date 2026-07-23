@@ -11,6 +11,7 @@ import logging
 import os
 import subprocess
 import sys
+import time
 import winreg
 from dataclasses import dataclass
 from logging.handlers import RotatingFileHandler
@@ -37,6 +38,17 @@ if not log.handlers:
         log.addHandler(_h)
     except OSError:
         log.addHandler(logging.NullHandler())
+
+
+def _log_op(op, resultado, motivo="", dur_ms=None, **campos):
+    """Una línea estructurada por INTENTO (no solo por éxito), para poder
+    computar tasa de éxito y latencia desde el log. resultado ∈
+    {ok, rechazo, error}: 'rechazo' = validación/usuario (fuera del SLO),
+    'error' = el SO falló (dentro del SLO)."""
+    extra = " ".join(f"{k}={v}" for k, v in campos.items() if v != "")
+    if dur_ms is not None:
+        extra = f"dur_ms={dur_ms} {extra}".strip()
+    log.info("op=%s resultado=%s motivo=%s %s", op, resultado, motivo, extra)
 
 
 def _hidden_startupinfo():
@@ -470,13 +482,19 @@ def _validar_static(ip, mask, gw, dns):
 
 def set_static(nombre, ip, mask, gw=None, dns=None):
     """Aplica IP estática (y DNS si se indica). Devuelve (ok, mensaje)."""
+    t0 = time.perf_counter()
+    def _dur():
+        return round((time.perf_counter() - t0) * 1000)
+
     ip, mask = ip.strip(), mask.strip()
     gw = gw.strip() if gw else ""
     dns = dns.strip() if dns else ""
     error = _validar_static(ip, mask, gw, dns)
     if error:
+        _log_op("set_static", "rechazo", error, _dur(), iface=nombre, ip=ip)
         return False, error
     if ip_en_uso(ip):
+        _log_op("set_static", "rechazo", "ip_en_uso", _dur(), iface=nombre, ip=ip)
         return False, f"⚠ {ip} ya está en uso — no se aplicó nada"
     cmd = ["netsh", "interface", "ip", "set", "address", f"name={nombre}", "static", ip, mask]
     if gw:
@@ -484,6 +502,8 @@ def set_static(nombre, ip, mask, gw=None, dns=None):
     res = run(cmd)
     if not (res and res.returncode == 0):
         detalle = ((res.stderr or res.stdout) or "").strip() if res else ""
+        _log_op("set_static", "error", detalle or "netsh_fallo", _dur(),
+                iface=nombre, ip=ip)
         return False, (detalle or "Error (¿admin?)")
     avisos = []
     if dns:
@@ -495,19 +515,22 @@ def set_static(nombre, ip, mask, gw=None, dns=None):
         red = ipaddress.ip_network(f"{ip}/{mask}", strict=False)
         if ipaddress.IPv4Address(gw) not in red:
             avisos.append("⚠ gateway fuera de la subred")
-    log.info("set_static %s ip=%s mask=%s gw=%s dns=%s %s",
-             nombre, ip, mask, gw, dns, " ".join(avisos))
+    _log_op("set_static", "ok", " ".join(avisos), _dur(),
+            iface=nombre, ip=ip, mask=mask, gw=gw, dns=dns)
     return True, "  ".join([f"IP {ip} aplicada", *avisos])
 
 
 def set_dhcp(nombre):
     """Pone la interfaz en automático (DHCP). Devuelve (ok, mensaje)."""
+    t0 = time.perf_counter()
     r1 = run(["netsh", "interface", "ip", "set", "address", f"name={nombre}", "dhcp"])
     run(["netsh", "interface", "ip", "set", "dns", f"name={nombre}", "dhcp"])
+    dur_ms = round((time.perf_counter() - t0) * 1000)
     if r1 and r1.returncode == 0:
-        log.info("set_dhcp %s", nombre)
+        _log_op("set_dhcp", "ok", "", dur_ms, iface=nombre)
         return True, "DHCP activado"
     detalle = ((r1.stderr or r1.stdout) or "").strip() if r1 else ""
+    _log_op("set_dhcp", "error", detalle or "netsh_fallo", dur_ms, iface=nombre)
     return False, (detalle or "Error (¿admin?)")
 
 
