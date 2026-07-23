@@ -179,6 +179,47 @@ def test_fabricante_mac(mac, esperado):
     assert netops.fabricante_mac(mac) == esperado
 
 
+# --- Estrategias -------------------------------------------------------------
+class _OpsRegistro:
+    """Doble mínimo: registra qué operación se pidió y con qué argumentos."""
+
+    def set_static(self, iface, ip, mask, gw, dns):
+        self.static = (iface, ip, mask, gw, dns)
+        return True, "ok"
+
+    def set_dhcp(self, iface):
+        self.dhcp = iface
+        return True, "ok"
+
+
+def test_ip_fija_delega_en_set_static():
+    ops = _OpsRegistro()
+    ok, _ = netops.IPFija("10.0.0.5", "255.255.255.0",
+                          "10.0.0.1", "8.8.8.8").aplicar(ops, "Ethernet")
+    assert ok
+    assert ops.static == ("Ethernet", "10.0.0.5", "255.255.255.0",
+                          "10.0.0.1", "8.8.8.8")
+
+
+def test_dhcp_delega_en_set_dhcp():
+    ops = _OpsRegistro()
+    ok, _ = netops.DHCP().aplicar(ops, "Wi-Fi")
+    assert ok
+    assert ops.dhcp == "Wi-Fi"
+
+
+def test_estrategia_de_perfil_por_defecto_ip_fija():
+    e = netops.estrategia_de_perfil({"ip": "10.0.0.5", "gw": "10.0.0.1"})
+    assert isinstance(e, netops.IPFija)
+    assert (e.ip, e.mask, e.gw, e.dns) == ("10.0.0.5", "255.255.255.0",
+                                           "10.0.0.1", "")
+
+
+def test_estrategia_de_perfil_modo_dhcp():
+    assert isinstance(netops.estrategia_de_perfil({"modo": "dhcp"}),
+                      netops.DHCP)
+
+
 # --- set_static: validación (retorna ANTES de tocar la red) ------------------
 @pytest.mark.parametrize("ip,mask,gw", [
     ("no-es-ip", "255.255.255.0", ""),

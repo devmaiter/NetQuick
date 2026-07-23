@@ -361,29 +361,28 @@ class MiniWidget:
         })
         return False
 
-    def aplicar_ip(self):
+    def _aplicar_estrategia(self, estrategia):
+        """Camino común de aplicar red: interfaz elegida, admin, ejecutar la
+        estrategia (IPFija/DHCP) y reflejar el resultado. Devuelve ok."""
         nombre = self._iface_name()
         if not nombre:
-            return self._msg("Elige una interfaz", ERR)
+            self._msg("Elige una interfaz", ERR)
+            return False
         if not self._ensure_admin():
-            return
-        ok, msg = self.ops.set_static(nombre, self._val(self.ip),
-                                    self._val(self.mask) or "255.255.255.0",
-                                    self._val(self.gw), self._val(self.dns))
+            return False
+        ok, msg = estrategia.aplicar(self.ops, nombre)
         self._msg(("✔ " if ok else "✗ ") + msg, OK if ok else ERR)
         if ok:
             self.refrescar()
+        return ok
+
+    def aplicar_ip(self):
+        self._aplicar_estrategia(netops.IPFija(
+            self._val(self.ip), self._val(self.mask) or "255.255.255.0",
+            self._val(self.gw), self._val(self.dns)))
 
     def aplicar_dhcp(self):
-        nombre = self._iface_name()
-        if not nombre:
-            return self._msg("Elige una interfaz", ERR)
-        if not self._ensure_admin():
-            return
-        ok, msg = self.ops.set_dhcp(nombre)
-        self._msg(("✔ " if ok else "✗ ") + msg, OK if ok else ERR)
-        if ok:
-            self.refrescar()
+        if self._aplicar_estrategia(netops.DHCP()):
             # el servidor DHCP tarda un par de segundos en dar la IP nueva
             self.root.after(2500, self.refrescar)
             self.root.after(6000, self.refrescar)
@@ -394,7 +393,7 @@ class MiniWidget:
         self._put(self.mask, p.get("mask", "255.255.255.0"))
         self._put(self.gw, p.get("gw", ""))
         self._put(self.dns, p.get("dns", ""))
-        self.aplicar_ip()
+        self._aplicar_estrategia(netops.estrategia_de_perfil(p))
 
     # --- Escáner de dispositivos ---------------------------------------------
     def abrir_scanner(self):

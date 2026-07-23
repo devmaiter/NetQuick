@@ -12,7 +12,9 @@ import os
 import subprocess
 import sys
 import winreg
+from dataclasses import dataclass
 from logging.handlers import RotatingFileHandler
+from typing import Protocol
 
 import psutil
 
@@ -507,3 +509,38 @@ def set_dhcp(nombre):
         return True, "DHCP activado"
     detalle = ((r1.stderr or r1.stdout) or "").strip() if r1 else ""
     return False, (detalle or "Error (¿admin?)")
+
+
+# --- Estrategias de aplicación ----------------------------------------------
+# Patrón Strategy en su forma pythónica: un Protocol (duck typing tipado) y
+# dataclasses que empaquetan los parámetros y delegan en set_static/set_dhcp.
+# aplicar() recibe el módulo de operaciones para que la UI pueda inyectar
+# dobles en los tests, igual que hace con todo lo demás.
+class EstrategiaRed(Protocol):
+    def aplicar(self, ops, iface): ...
+
+
+@dataclass
+class IPFija:
+    ip: str
+    mask: str = "255.255.255.0"
+    gw: str = ""
+    dns: str = ""
+
+    def aplicar(self, ops, iface):
+        return ops.set_static(iface, self.ip, self.mask, self.gw, self.dns)
+
+
+@dataclass
+class DHCP:
+    def aplicar(self, ops, iface):
+        return ops.set_dhcp(iface)
+
+
+def estrategia_de_perfil(p):
+    """La estrategia que corresponde a un perfil guardado. Los perfiles de
+    hoy son siempre de IP fija; un futuro {"modo": "dhcp"} ya tiene salida."""
+    if p.get("modo") == "dhcp":
+        return DHCP()
+    return IPFija(p.get("ip", ""), p.get("mask", "255.255.255.0"),
+                  p.get("gw", ""), p.get("dns", ""))
