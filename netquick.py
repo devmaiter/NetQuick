@@ -124,10 +124,14 @@ class MiniWidget:
             tk.Label(body, text=txt, bg=BG, fg=MUTED,
                      font=("Segoe UI", 8)).grid(row=2, column=col, sticky="w", padx=(0, 6))
 
-        self.ip = self._entry(body); self.ip.grid(row=3, column=0, padx=(0, 6), sticky="we")
-        self.mask = self._entry(body); self.mask.grid(row=3, column=1, padx=(0, 6), sticky="we")
-        self.gw = self._entry(body); self.gw.grid(row=3, column=2, padx=(0, 6), sticky="we")
-        self.dns = self._entry(body); self.dns.grid(row=3, column=3, sticky="we")
+        self.ip = self._entry(body)
+        self.ip.grid(row=3, column=0, padx=(0, 6), sticky="we")
+        self.mask = self._entry(body)
+        self.mask.grid(row=3, column=1, padx=(0, 6), sticky="we")
+        self.gw = self._entry(body)
+        self.gw.grid(row=3, column=2, padx=(0, 6), sticky="we")
+        self.dns = self._entry(body)
+        self.dns.grid(row=3, column=3, sticky="we")
         for c in range(4):
             body.columnconfigure(c, weight=1)
 

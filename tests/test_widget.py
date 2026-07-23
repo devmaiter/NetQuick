@@ -14,7 +14,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import netquick  # noqa: E402
+import netquick
 
 
 class FakeOps:

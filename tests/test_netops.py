@@ -7,7 +7,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import netops  # noqa: E402
+import netops
 
 
 # --- ip_valida ---------------------------------------------------------------
@@ -42,7 +42,7 @@ def test_decodificar_vacio():
 
 
 def test_decodificar_utf8():
-    assert netops._decodificar("Sí, está bien".encode("utf-8")) == "Sí, está bien"
+    assert netops._decodificar("Sí, está bien".encode()) == "Sí, está bien"
 
 
 def test_decodificar_oem():

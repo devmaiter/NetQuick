@@ -497,7 +497,7 @@ def set_static(nombre, ip, mask, gw=None, dns=None):
             avisos.append("⚠ gateway fuera de la subred")
     log.info("set_static %s ip=%s mask=%s gw=%s dns=%s %s",
              nombre, ip, mask, gw, dns, " ".join(avisos))
-    return True, "  ".join([f"IP {ip} aplicada"] + avisos)
+    return True, "  ".join([f"IP {ip} aplicada", *avisos])
 
 
 def set_dhcp(nombre):

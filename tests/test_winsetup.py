@@ -5,7 +5,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import winsetup  # noqa: E402
+import winsetup
 
 
 def test_task_xml_contiene_el_exe():

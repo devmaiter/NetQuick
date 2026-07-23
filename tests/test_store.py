@@ -5,7 +5,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import store  # noqa: E402
+import store
 
 
 def test_perfiles_ida_y_vuelta(tmp_path):
