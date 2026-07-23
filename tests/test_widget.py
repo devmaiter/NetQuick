@@ -48,6 +48,29 @@ class FakeOps:
         self.dhcp_llamado = nombre
         return True, "DHCP activado"
 
+    def fabricante_mac(self, mac):
+        return ""
+
+
+class FakeStore:
+    """Persistencia en memoria: los tests no leen ni escriben JSON reales."""
+
+    def __init__(self, profiles=None, config=None):
+        self.profiles = profiles or {}
+        self.config = config or {}
+
+    def load_profiles(self):
+        return dict(self.profiles)
+
+    def load_config(self):
+        return dict(self.config)
+
+    def save_profiles(self, data):
+        self.profiles = dict(data)
+
+    def save_config(self, data):
+        self.config = dict(data)
+
 
 def _crear(monkeypatch, **kwargs):
     # Sin icono de bandeja en tests: evita hilos de pystray sueltos
@@ -59,7 +82,7 @@ def _crear(monkeypatch, **kwargs):
     error = None
     for _ in range(3):
         try:
-            return netquick.MiniWidget(ops=fake), fake
+            return netquick.MiniWidget(ops=fake, store_mod=FakeStore()), fake
         except tk.TclError as e:
             error = e
     pytest.skip(f"Tkinter no puede abrir ventanas en este entorno: {error}")

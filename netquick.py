@@ -10,14 +10,13 @@ NetQuick Mini — widget flotante, siempre encima, para cambiar red/IP al vuelo.
   lo muestra de nuevo. "Salir" está en el menú del icono (clic derecho).
 """
 import argparse
-import json
-import os
 import threading
 import tkinter as tk
 import webbrowser
 from tkinter import ttk
 
 import netops
+import store
 import winsetup
 
 __version__ = "1.2.2-beta"
@@ -40,64 +39,18 @@ MUTED = "#6B7280"         # texto secundario
 OK = "#2E7D32"            # verde estado
 ERR = "#E53935"           # rojo estado / errores
 
-# Prefijos MAC (OUI) de fabricantes habituales en redes de audio
-OUI_CONOCIDOS = {
-    "00-1d-c1": "Audinate (Dante)",
-    "00-a0-de": "Yamaha",
-    "00-0e-dd": "Shure",
-    "00-60-74": "QSC",
-    "00-04-c4": "Allen & Heath",
-    "b8-27-eb": "Raspberry Pi",
-    "dc-a6-32": "Raspberry Pi",
-}
-
-# Los perfiles y la configuración viven junto a la app en desarrollo y en
-# %APPDATA%\NetQuick empaquetado como exe (lo decide winsetup.APP_DIR).
-PROFILES_FILE = os.path.join(winsetup.APP_DIR, "profiles.json")
-CONFIG_FILE = os.path.join(winsetup.APP_DIR, "config.json")
-
-
-# --- Persistencia de perfiles ----------------------------------------------
-def load_profiles():
-    try:
-        with open(PROFILES_FILE, encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {}
-
-
-def save_profiles(data):
-    with open(PROFILES_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-
-
-def load_config():
-    try:
-        with open(CONFIG_FILE, encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {}
-
-
-def save_config(data):
-    try:
-        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-    except OSError:
-        pass
-
-
 class MiniWidget:
-    def __init__(self, ops=netops):
-        # Las operaciones de red se inyectan: en la app es el módulo netops,
-        # en los tests un doble que no toca el sistema.
+    def __init__(self, ops=netops, store_mod=store):
+        # Las operaciones de red y la persistencia se inyectan: en la app son
+        # los módulos netops/store, en los tests dobles que no tocan nada.
         self.ops = ops
+        self.store = store_mod
         self.root = tk.Tk()
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
         self.root.configure(bg=ACCENT)
-        self.profiles = load_profiles()
-        self.config = load_config()
+        self.profiles = self.store.load_profiles()
+        self.config = self.store.load_config()
         self._map = {}
         self._display = {}
 
@@ -295,7 +248,7 @@ class MiniWidget:
         nombre = self._iface_name()
         if nombre and nombre != self.config.get("ultima_interfaz"):
             self.config["ultima_interfaz"] = nombre
-            save_config(self.config)
+            self.store.save_config(self.config)
         self._on_iface()
 
     def refrescar(self, select_default=False):
@@ -491,7 +444,7 @@ class MiniWidget:
                 texto = d["ip"] + ("  (este PC)" if d["propia"] else "")
                 tk.Label(row, text=texto, bg=CARD, fg=TEXT, font=("Consolas", 9),
                          width=22, anchor="w").pack(side="left")
-                fabricante = OUI_CONOCIDOS.get(d["mac"][:8], "") if d["mac"] else ""
+                fabricante = self.ops.fabricante_mac(d["mac"])
                 partes_det = []
                 if es_dante:
                     nombre_d = d["dante"]
@@ -614,13 +567,13 @@ class MiniWidget:
             "gw": self._val(self.gw),
             "dns": self._val(self.dns),
         }
-        save_profiles(self.profiles)
+        self.store.save_profiles(self.profiles)
         self._render_config_profiles(win)
         self._render_profiles()
 
     def _borrar_perfil(self, nombre, win):
         self.profiles.pop(nombre, None)
-        save_profiles(self.profiles)
+        self.store.save_profiles(self.profiles)
         self._render_config_profiles(win)
         self._render_profiles()
 

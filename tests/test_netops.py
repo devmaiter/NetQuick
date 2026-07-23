@@ -81,6 +81,19 @@ def test_nombre_mdns_sin_nombre():
     assert netops._nombre_mdns(b"") == ""
 
 
+# --- fabricante_mac ----------------------------------------------------------
+@pytest.mark.parametrize("mac,esperado", [
+    ("00-1d-c1-11-22-33", "Audinate (Dante)"),
+    ("00-1D-C1-11-22-33", "Audinate (Dante)"),   # mayúsculas: se normaliza
+    ("b8-27-eb-aa-bb-cc", "Raspberry Pi"),
+    ("aa-bb-cc-dd-ee-ff", ""),                    # OUI desconocido
+    ("", ""),
+    (None, ""),
+])
+def test_fabricante_mac(mac, esperado):
+    assert netops.fabricante_mac(mac) == esperado
+
+
 # --- set_static: validación (retorna ANTES de tocar la red) ------------------
 @pytest.mark.parametrize("ip,mask,gw", [
     ("no-es-ip", "255.255.255.0", ""),

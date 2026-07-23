@@ -346,6 +346,23 @@ def descubrir_dante(nombre, timeout=2.0):
     return encontrados
 
 
+# Prefijos MAC (OUI) de fabricantes habituales en redes de audio
+OUI_CONOCIDOS = {
+    "00-1d-c1": "Audinate (Dante)",
+    "00-a0-de": "Yamaha",
+    "00-0e-dd": "Shure",
+    "00-60-74": "QSC",
+    "00-04-c4": "Allen & Heath",
+    "b8-27-eb": "Raspberry Pi",
+    "dc-a6-32": "Raspberry Pi",
+}
+
+
+def fabricante_mac(mac):
+    """Fabricante según el prefijo OUI de la MAC ('aa-bb-cc-…'), o ''."""
+    return OUI_CONOCIDOS.get((mac or "")[:8].lower(), "")
+
+
 # --- Escaneo de la subred ----------------------------------------------------
 def scan_red(nombre, timeout_ms=250):
     """Escaneo de la subred REAL de la interfaz (según su máscara).

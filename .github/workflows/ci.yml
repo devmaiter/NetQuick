@@ -20,4 +20,4 @@ jobs:
       - name: Tests
         run: pytest -q
       - name: La app compila (sintaxis)
-        run: python -m py_compile netquick.py netops.py
+        run: python -m py_compile netquick.py netops.py winsetup.py store.py
