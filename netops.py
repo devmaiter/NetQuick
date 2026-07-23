@@ -11,8 +11,11 @@ import logging
 import os
 import subprocess
 import sys
+import time
 import winreg
+from dataclasses import dataclass
 from logging.handlers import RotatingFileHandler
+from typing import Protocol
 
 import psutil
 
@@ -35,6 +38,17 @@ if not log.handlers:
         log.addHandler(_h)
     except OSError:
         log.addHandler(logging.NullHandler())
+
+
+def _log_op(op, resultado, motivo="", dur_ms=None, **campos):
+    """Una línea estructurada por INTENTO (no solo por éxito), para poder
+    computar tasa de éxito y latencia desde el log. resultado ∈
+    {ok, rechazo, error}: 'rechazo' = validación/usuario (fuera del SLO),
+    'error' = el SO falló (dentro del SLO)."""
+    extra = " ".join(f"{k}={v}" for k, v in campos.items() if v != "")
+    if dur_ms is not None:
+        extra = f"dur_ms={dur_ms} {extra}".strip()
+    log.info("op=%s resultado=%s motivo=%s %s", op, resultado, motivo, extra)
 
 
 def _hidden_startupinfo():
@@ -174,25 +188,16 @@ def _reg_ip(valor):
     return (valor or "").strip("\x00").strip()
 
 
-def get_config(nombre):
-    """Config real de la interfaz: {'dhcp', 'ip', 'mask', 'gw'}.
+def _primer_dns(cadena):
+    """Primer servidor de una lista DNS del registro ('8.8.8.8,1.1.1.1')."""
+    return cadena.replace(",", " ").split()[0] if cadena else ""
 
-    Sin parsear texto de netsh: la IP y máscara salen de psutil y el modo
-    DHCP y el gateway del registro (Tcpip\\Parameters\\Interfaces\\{GUID}).
-    Funciona igual en cualquier idioma/configuración de Windows.
-    """
-    info = {"dhcp": False, "ip": "", "mask": "", "gw": "", "dns": ""}
-    try:
-        for d in psutil.net_if_addrs().get(nombre, []):
-            if d.family.name == "AF_INET":
-                info["ip"] = d.address
-                info["mask"] = d.netmask or ""
-                break
-    except Exception:
-        pass
-    guid = _iface_guid(nombre)
-    if not guid:
-        return info
+
+def _config_registro(guid):
+    """Modo DHCP, gateway y DNS de la interfaz, leídos del registro
+    (Tcpip\\Parameters\\Interfaces\\{GUID}). Mejor esfuerzo: lo que no se
+    pueda leer conserva su valor por defecto."""
+    info = {"dhcp": False, "gw": "", "dns": ""}
     ruta = (r"SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces"
             "\\" + guid)
     try:
@@ -206,12 +211,34 @@ def get_config(nombre):
             # DNS: 'NameServer' (estático, "8.8.8.8,1.1.1.1") o 'DhcpNameServer'
             clave_dns = "DhcpNameServer" if info["dhcp"] else "NameServer"
             try:
-                dns = _reg_ip(winreg.QueryValueEx(k, clave_dns)[0])
-                info["dns"] = dns.replace(",", " ").split()[0] if dns else ""
+                info["dns"] = _primer_dns(
+                    _reg_ip(winreg.QueryValueEx(k, clave_dns)[0]))
             except OSError:
                 pass
     except OSError:
         pass
+    return info
+
+
+def get_config(nombre):
+    """Config real de la interfaz: {'dhcp', 'ip', 'mask', 'gw', 'dns'}.
+
+    Sin parsear texto de netsh: la IP y máscara salen de psutil y el modo
+    DHCP, el gateway y el DNS del registro. Funciona igual en cualquier
+    idioma/configuración de Windows.
+    """
+    info = {"dhcp": False, "ip": "", "mask": "", "gw": "", "dns": ""}
+    try:
+        for d in psutil.net_if_addrs().get(nombre, []):
+            if d.family.name == "AF_INET":
+                info["ip"] = d.address
+                info["mask"] = d.netmask or ""
+                break
+    except Exception:
+        pass
+    guid = _iface_guid(nombre)
+    if guid:
+        info.update(_config_registro(guid))
     return info
 
 
@@ -236,6 +263,30 @@ def mascara_valida(valor):
 
 
 # --- Detección de conflictos -----------------------------------------------
+def _parsear_arp(texto, red=None):
+    """{ip: mac} de la salida de 'arp -a'. Descarta broadcast, multicast
+    (01-00-5e) y entradas incompletas; con 'red', solo las IPs de esa
+    subred (excluida su dirección de broadcast)."""
+    tabla = {}
+    for linea in (texto or "").splitlines():
+        partes = linea.split()
+        if len(partes) < 2:
+            continue
+        ip, mac = partes[0], partes[1].lower()
+        if mac.count("-") != 5 or mac == "ff-ff-ff-ff-ff-ff" \
+           or mac.startswith("01-00-5e"):
+            continue
+        try:
+            direccion = ipaddress.IPv4Address(ip)
+        except ipaddress.AddressValueError:
+            continue
+        if red is not None and (direccion not in red
+                                or ip == str(red.broadcast_address)):
+            continue
+        tabla[ip] = mac
+    return tabla
+
+
 def ip_en_uso(ip):
     """True si otro dispositivo de la red ya responde en esa IP.
 
@@ -252,14 +303,7 @@ def ip_en_uso(ip):
     if res and res.returncode == 0 and "ttl=" in (res.stdout or "").lower():
         return True
     res = run(["arp", "-a"])
-    if res and res.stdout:
-        for linea in res.stdout.splitlines():
-            partes = linea.split()
-            if len(partes) >= 2 and partes[0] == ip:
-                mac = partes[1].lower()
-                if mac.count("-") == 5 and mac != "ff-ff-ff-ff-ff-ff":
-                    return True
-    return False
+    return bool(res and ip in _parsear_arp(res.stdout))
 
 
 # --- Descubrimiento Dante (mDNS) --------------------------------------------
@@ -346,7 +390,55 @@ def descubrir_dante(nombre, timeout=2.0):
     return encontrados
 
 
+# Prefijos MAC (OUI) de fabricantes habituales en redes de audio
+OUI_CONOCIDOS = {
+    "00-1d-c1": "Audinate (Dante)",
+    "00-a0-de": "Yamaha",
+    "00-0e-dd": "Shure",
+    "00-60-74": "QSC",
+    "00-04-c4": "Allen & Heath",
+    "b8-27-eb": "Raspberry Pi",
+    "dc-a6-32": "Raspberry Pi",
+}
+
+
+def fabricante_mac(mac):
+    """Fabricante según el prefijo OUI de la MAC ('aa-bb-cc-…'), o ''."""
+    return OUI_CONOCIDOS.get((mac or "")[:8].lower(), "")
+
+
 # --- Escaneo de la subred ----------------------------------------------------
+def _ping_barrido(red, timeout_ms):
+    """Ping corto en paralelo a todas las IPs de la subred. Las respuestas
+    no se miran: el objetivo es que la caché ARP quede poblada."""
+    import concurrent.futures
+
+    def _ping(ip):
+        run(["ping", "-n", "1", "-w", str(timeout_ms), str(ip)], quiet=True)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=64) as ex:
+        list(ex.map(_ping, red.hosts()))
+
+
+def _combinar_dispositivos(arp, dante, propia):
+    """Une la tabla ARP {ip: mac} con los equipos Dante {ip: nombre} y marca
+    la propia máquina. Los Dante entran aunque estén fuera de la subred (así
+    aparecen los que quedaron con una IP fija equivocada). Devuelve la lista
+    [{'ip','mac','propia','dante'}] ordenada numéricamente por IP."""
+    encontrados = {ip: {"ip": ip, "mac": mac, "propia": False, "dante": None}
+                   for ip, mac in arp.items()}
+    for ip, nombre_d in dante.items():
+        if ip == propia:
+            continue
+        e = encontrados.setdefault(ip, {"ip": ip, "mac": "", "propia": False,
+                                        "dante": None})
+        e["dante"] = nombre_d or "Dante"
+    encontrados[propia] = {"ip": propia, "mac": "", "propia": True,
+                           "dante": None}
+    return sorted(encontrados.values(),
+                  key=lambda d: tuple(int(x) for x in d["ip"].split(".")))
+
+
 def scan_red(nombre, timeout_ms=250):
     """Escaneo de la subred REAL de la interfaz (según su máscara).
 
@@ -357,7 +449,6 @@ def scan_red(nombre, timeout_ms=250):
       multicast constantemente y llenan solos la caché ARP; se lee entera.
     Devuelve [{'ip','mac','propia'}] ordenado por IP. No requiere admin.
     """
-    import concurrent.futures
     propia = get_ip(nombre)
     if not propia:
         return []
@@ -368,62 +459,42 @@ def scan_red(nombre, timeout_ms=250):
         red = ipaddress.ip_network(f"{propia}/24", strict=False)
 
     if red.num_addresses <= 1024:
-        def _ping(ip):
-            run(["ping", "-n", "1", "-w", str(timeout_ms), str(ip)], quiet=True)
+        _ping_barrido(red, timeout_ms)
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=64) as ex:
-            list(ex.map(_ping, red.hosts()))
-
-    encontrados = {}
     res = run(["arp", "-a"])
-    if res and res.stdout:
-        for linea in res.stdout.splitlines():
-            partes = linea.split()
-            if len(partes) < 2:
-                continue
-            ip, mac = partes[0], partes[1].lower()
-            try:
-                if ipaddress.IPv4Address(ip) not in red:
-                    continue
-            except ipaddress.AddressValueError:
-                continue
-            # descartar broadcast, multicast y entradas incompletas
-            if mac.count("-") != 5 or mac == "ff-ff-ff-ff-ff-ff" \
-               or mac.startswith("01-00-5e") or ip == str(red.broadcast_address):
-                continue
-            encontrados[ip] = {"ip": ip, "mac": mac, "propia": False,
-                               "dante": None}
-
-    # Equipos Dante por mDNS (como Dante Controller). Sin filtrar por subred:
-    # así aparecen también los que quedaron con una IP fija equivocada.
-    for ip, nombre_d in descubrir_dante(nombre).items():
-        if ip == propia:
-            continue
-        e = encontrados.setdefault(ip, {"ip": ip, "mac": "", "propia": False,
-                                        "dante": None})
-        e["dante"] = nombre_d or "Dante"
-
-    encontrados[propia] = {"ip": propia, "mac": "", "propia": True,
-                           "dante": None}
-    return sorted(encontrados.values(),
-                  key=lambda d: tuple(int(x) for x in d["ip"].split(".")))
+    arp = _parsear_arp(res.stdout if res else "", red)
+    return _combinar_dispositivos(arp, descubrir_dante(nombre), propia)
 
 
 # --- Aplicar configuración -------------------------------------------------
+def _validar_static(ip, mask, gw, dns):
+    """Mensaje de error del primer campo inválido, o None si todo cuadra."""
+    if not ip_valida(ip):
+        return f"IP no válida: {ip}"
+    if not mascara_valida(mask):
+        return f"Máscara no válida: {mask} (usa 255.255.255.0)"
+    if gw and not ip_valida(gw):
+        return f"Gateway no válido: {gw}"
+    if dns and not ip_valida(dns):
+        return f"DNS no válido: {dns}"
+    return None
+
+
 def set_static(nombre, ip, mask, gw=None, dns=None):
     """Aplica IP estática (y DNS si se indica). Devuelve (ok, mensaje)."""
+    t0 = time.perf_counter()
+    def _dur():
+        return round((time.perf_counter() - t0) * 1000)
+
     ip, mask = ip.strip(), mask.strip()
     gw = gw.strip() if gw else ""
     dns = dns.strip() if dns else ""
-    if not ip_valida(ip):
-        return False, f"IP no válida: {ip}"
-    if not mascara_valida(mask):
-        return False, f"Máscara no válida: {mask} (usa 255.255.255.0)"
-    if gw and not ip_valida(gw):
-        return False, f"Gateway no válido: {gw}"
-    if dns and not ip_valida(dns):
-        return False, f"DNS no válido: {dns}"
+    error = _validar_static(ip, mask, gw, dns)
+    if error:
+        _log_op("set_static", "rechazo", error, _dur(), iface=nombre, ip=ip)
+        return False, error
     if ip_en_uso(ip):
+        _log_op("set_static", "rechazo", "ip_en_uso", _dur(), iface=nombre, ip=ip)
         return False, f"⚠ {ip} ya está en uso — no se aplicó nada"
     cmd = ["netsh", "interface", "ip", "set", "address", f"name={nombre}", "static", ip, mask]
     if gw:
@@ -431,28 +502,75 @@ def set_static(nombre, ip, mask, gw=None, dns=None):
     res = run(cmd)
     if not (res and res.returncode == 0):
         detalle = ((res.stderr or res.stdout) or "").strip() if res else ""
+        _log_op("set_static", "error", detalle or "netsh_fallo", _dur(),
+                iface=nombre, ip=ip)
         return False, (detalle or "Error (¿admin?)")
     avisos = []
+    dns_ok = True
     if dns:
         r2 = run(["netsh", "interface", "ip", "set", "dns",
                   f"name={nombre}", "static", dns])
         if not (r2 and r2.returncode == 0):
-            avisos.append("⚠ el DNS no se pudo aplicar")
+            dns_ok = False
+            avisos.append("el DNS no se pudo aplicar")
     if gw:
         red = ipaddress.ip_network(f"{ip}/{mask}", strict=False)
         if ipaddress.IPv4Address(gw) not in red:
-            avisos.append("⚠ gateway fuera de la subred")
-    log.info("set_static %s ip=%s mask=%s gw=%s dns=%s %s",
-             nombre, ip, mask, gw, dns, " ".join(avisos))
-    return True, "  ".join([f"IP {ip} aplicada"] + avisos)
+            avisos.append("gateway fuera de la subred")
+    # Lección Rogers 2022: una operación que deja el sistema a medias no debe
+    # reportar éxito limpio. Si se pidió DNS y falló, la transacción no logró su
+    # objetivo -> ok=False (el gateway fuera de subred sí es solo un aviso).
+    resultado = "ok" if dns_ok else "parcial"
+    _log_op("set_static", resultado, " ".join(avisos), _dur(),
+            iface=nombre, ip=ip, mask=mask, gw=gw, dns=dns)
+    msg = "  ".join([f"IP {ip} aplicada", *(f"⚠ {a}" for a in avisos)])
+    return dns_ok, msg
 
 
 def set_dhcp(nombre):
     """Pone la interfaz en automático (DHCP). Devuelve (ok, mensaje)."""
+    t0 = time.perf_counter()
     r1 = run(["netsh", "interface", "ip", "set", "address", f"name={nombre}", "dhcp"])
     run(["netsh", "interface", "ip", "set", "dns", f"name={nombre}", "dhcp"])
+    dur_ms = round((time.perf_counter() - t0) * 1000)
     if r1 and r1.returncode == 0:
-        log.info("set_dhcp %s", nombre)
+        _log_op("set_dhcp", "ok", "", dur_ms, iface=nombre)
         return True, "DHCP activado"
     detalle = ((r1.stderr or r1.stdout) or "").strip() if r1 else ""
+    _log_op("set_dhcp", "error", detalle or "netsh_fallo", dur_ms, iface=nombre)
     return False, (detalle or "Error (¿admin?)")
+
+
+# --- Estrategias de aplicación ----------------------------------------------
+# Patrón Strategy en su forma pythónica: un Protocol (duck typing tipado) y
+# dataclasses que empaquetan los parámetros y delegan en set_static/set_dhcp.
+# aplicar() recibe el módulo de operaciones para que la UI pueda inyectar
+# dobles en los tests, igual que hace con todo lo demás.
+class EstrategiaRed(Protocol):
+    def aplicar(self, ops, iface): ...
+
+
+@dataclass
+class IPFija:
+    ip: str
+    mask: str = "255.255.255.0"
+    gw: str = ""
+    dns: str = ""
+
+    def aplicar(self, ops, iface):
+        return ops.set_static(iface, self.ip, self.mask, self.gw, self.dns)
+
+
+@dataclass
+class DHCP:
+    def aplicar(self, ops, iface):
+        return ops.set_dhcp(iface)
+
+
+def estrategia_de_perfil(p):
+    """La estrategia que corresponde a un perfil guardado. Los perfiles de
+    hoy son siempre de IP fija; un futuro {"modo": "dhcp"} ya tiene salida."""
+    if p.get("modo") == "dhcp":
+        return DHCP()
+    return IPFija(p.get("ip", ""), p.get("mask", "255.255.255.0"),
+                  p.get("gw", ""), p.get("dns", ""))

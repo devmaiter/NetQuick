@@ -10,17 +10,14 @@ NetQuick Mini — widget flotante, siempre encima, para cambiar red/IP al vuelo.
   lo muestra de nuevo. "Salir" está en el menú del icono (clic derecho).
 """
 import argparse
-import ctypes
-import json
-import os
-import sys
 import threading
 import tkinter as tk
 import webbrowser
-import winreg
 from tkinter import ttk
 
 import netops
+import store
+import winsetup
 
 __version__ = "1.2.2-beta"
 
@@ -39,190 +36,22 @@ CARD = "#F3F4F6"          # gris claro (campos, botones secundarios)
 CARD_HOVER = "#E5E7EB"
 TEXT = "#1F2937"          # texto principal oscuro
 MUTED = "#6B7280"         # texto secundario
-OK = "#2E7D32"            # verde estado
-ERR = "#E53935"           # rojo estado / errores
-
-# Prefijos MAC (OUI) de fabricantes habituales en redes de audio
-OUI_CONOCIDOS = {
-    "00-1d-c1": "Audinate (Dante)",
-    "00-a0-de": "Yamaha",
-    "00-0e-dd": "Shure",
-    "00-60-74": "QSC",
-    "00-04-c4": "Allen & Heath",
-    "b8-27-eb": "Raspberry Pi",
-    "dc-a6-32": "Raspberry Pi",
-}
-
-# Empaquetado con PyInstaller: __file__ apunta a una carpeta temporal, así que
-# los datos del usuario (perfiles) van a %APPDATA%\NetQuick.
-FROZEN = getattr(sys, "frozen", False)
-HERE = os.path.dirname(os.path.abspath(sys.executable if FROZEN else __file__))
-if FROZEN:
-    APP_DIR = os.path.join(os.environ.get("APPDATA", HERE), "NetQuick")
-    os.makedirs(APP_DIR, exist_ok=True)
-else:
-    APP_DIR = HERE
-PROFILES_FILE = os.path.join(APP_DIR, "profiles.json")
-CONFIG_FILE = os.path.join(APP_DIR, "config.json")
-FIRSTRUN_FILE = os.path.join(APP_DIR, ".firstrun")
-VBS_SRC = os.path.join(HERE, "NetQuick.vbs")
-STARTUP_DIR = os.path.join(os.environ.get("APPDATA", ""),
-                           r"Microsoft\Windows\Start Menu\Programs\Startup")
-VBS_DST = os.path.join(STARTUP_DIR, "NetQuick.vbs")
-
-# Como .exe la app corre siempre elevada (manifest requireAdministrator):
-# así aplicar IP/DHCP nunca cierra ni relanza la ventana. El inicio con
-# Windows usa una tarea programada con privilegios (RunLevel Highest), que
-# arranca elevada al iniciar sesión SIN mostrar UAC.
-TASK_NAME = "NetQuick"
-# Clave Run de versiones anteriores (solo para migrar/limpiar)
-RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
-RUN_NAME = "NetQuick"
-
-
-def _task_xml(exe):
-    """XML de la tarea programada: al iniciar sesión, elevada, sin límites
-    de batería ni de tiempo (las opciones por defecto de schtasks los ponen)."""
-    return f"""<?xml version="1.0" encoding="UTF-16"?>
-<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-  <Triggers>
-    <LogonTrigger><Enabled>true</Enabled></LogonTrigger>
-  </Triggers>
-  <Principals>
-    <Principal id="Author">
-      <LogonType>InteractiveToken</LogonType>
-      <RunLevel>HighestAvailable</RunLevel>
-    </Principal>
-  </Principals>
-  <Settings>
-    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
-    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
-    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
-    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
-    <StartWhenAvailable>true</StartWhenAvailable>
-  </Settings>
-  <Actions Context="Author">
-    <Exec><Command>{exe}</Command></Exec>
-  </Actions>
-</Task>"""
-
-
-# --- Persistencia de perfiles ----------------------------------------------
-def load_profiles():
-    try:
-        with open(PROFILES_FILE, encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {}
-
-
-def save_profiles(data):
-    with open(PROFILES_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-
-
-def load_config():
-    try:
-        with open(CONFIG_FILE, encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {}
-
-
-def save_config(data):
-    try:
-        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-    except OSError:
-        pass
-
-
-# --- Inicio con Windows ----------------------------------------------------
-def in_startup():
-    if FROZEN:
-        res = netops.run(["schtasks", "/Query", "/TN", TASK_NAME], quiet=True)
-        return bool(res and res.returncode == 0)
-    return os.path.exists(VBS_DST)
-
-
-def set_startup(on):
-    try:
-        if FROZEN:
-            if on:
-                xml_path = os.path.join(APP_DIR, "task.xml")
-                with open(xml_path, "w", encoding="utf-16") as f:
-                    f.write(_task_xml(sys.executable))
-                res = netops.run(["schtasks", "/Create", "/TN", TASK_NAME,
-                                  "/XML", xml_path, "/F"])
-                try:
-                    os.remove(xml_path)
-                except OSError:
-                    pass
-                return bool(res and res.returncode == 0)
-            netops.run(["schtasks", "/Delete", "/TN", TASK_NAME, "/F"])
-            return True
-        if on:
-            # El .vbs de inicio lleva rutas absolutas (script Y pythonw): si
-            # pythonw no está en el PATH, un "pythonw" a secas falla silencioso.
-            script = os.path.join(HERE, "netquick.py")
-            pyw = netops.pythonw()
-            with open(VBS_DST, "w", encoding="utf-8") as f:
-                f.write('CreateObject("WScript.Shell").Run '
-                        f'"""{pyw}"" ""{script}""", 0, False\r\n')
-        elif not on and os.path.exists(VBS_DST):
-            os.remove(VBS_DST)
-        return True
-    except Exception:
-        return False
-
-
-def _regla_firewall():
-    """Regla de firewall para el exe (como hace Dante Controller al
-    instalarse): sin ella Windows bloquea las respuestas mDNS unicast de los
-    equipos Dante hacia el puerto efímero del escáner. Idempotente: borra la
-    regla anterior por si el exe cambió de ruta."""
-    netops.run(["netsh", "advfirewall", "firewall", "delete", "rule",
-                "name=NetQuick"], quiet=True)
-    netops.run(["netsh", "advfirewall", "firewall", "add", "rule",
-                "name=NetQuick", "dir=in", "action=allow",
-                f"program={sys.executable}", "profile=any", "enable=yes"])
-
-
-def primer_arranque_exe():
-    """La primera vez que corre el .exe se auto-registra para iniciar con
-    Windows (queda siempre en la bandeja). Solo una vez: si el usuario lo
-    desactiva en ⚙, se respeta su elección."""
-    if not FROZEN:
-        return
-    _regla_firewall()
-    # Migrar instalaciones previas: quitar la clave Run (arrancaba sin
-    # permisos) y sustituirla por la tarea programada elevada.
-    try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0,
-                            winreg.KEY_ALL_ACCESS) as k:
-            winreg.QueryValueEx(k, RUN_NAME)
-            winreg.DeleteValue(k, RUN_NAME)
-            set_startup(True)
-    except OSError:
-        pass
-    if os.path.exists(FIRSTRUN_FILE):
-        return
-    set_startup(True)
-    try:
-        with open(FIRSTRUN_FILE, "w") as f:
-            f.write("ok")
-    except Exception:
-        pass
-
+OK = "#2E7D32"            # verde estado (éxito limpio)
+WARN = "#B45309"          # ámbar (aplicado, pero con avisos)
+ERR = "#E53935"           # rojo estado / errores (no se aplicó)
 
 class MiniWidget:
-    def __init__(self):
+    def __init__(self, ops=netops, store_mod=store):
+        # Las operaciones de red y la persistencia se inyectan: en la app son
+        # los módulos netops/store, en los tests dobles que no tocan nada.
+        self.ops = ops
+        self.store = store_mod
         self.root = tk.Tk()
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
         self.root.configure(bg=ACCENT)
-        self.profiles = load_profiles()
-        self.config = load_config()
+        self.profiles = self.store.load_profiles()
+        self.config = self.store.load_config()
         self._map = {}
         self._display = {}
 
@@ -247,6 +76,8 @@ class MiniWidget:
         self.tray = None
         if TRAY_DISPONIBLE:
             self._init_tray()
+
+    def run(self):
         self.root.mainloop()
 
     def _place_bottom_right(self):
@@ -294,10 +125,14 @@ class MiniWidget:
             tk.Label(body, text=txt, bg=BG, fg=MUTED,
                      font=("Segoe UI", 8)).grid(row=2, column=col, sticky="w", padx=(0, 6))
 
-        self.ip = self._entry(body); self.ip.grid(row=3, column=0, padx=(0, 6), sticky="we")
-        self.mask = self._entry(body); self.mask.grid(row=3, column=1, padx=(0, 6), sticky="we")
-        self.gw = self._entry(body); self.gw.grid(row=3, column=2, padx=(0, 6), sticky="we")
-        self.dns = self._entry(body); self.dns.grid(row=3, column=3, sticky="we")
+        self.ip = self._entry(body)
+        self.ip.grid(row=3, column=0, padx=(0, 6), sticky="we")
+        self.mask = self._entry(body)
+        self.mask.grid(row=3, column=1, padx=(0, 6), sticky="we")
+        self.gw = self._entry(body)
+        self.gw.grid(row=3, column=2, padx=(0, 6), sticky="we")
+        self.dns = self._entry(body)
+        self.dns.grid(row=3, column=3, sticky="we")
         for c in range(4):
             body.columnconfigure(c, weight=1)
 
@@ -418,11 +253,11 @@ class MiniWidget:
         nombre = self._iface_name()
         if nombre and nombre != self.config.get("ultima_interfaz"):
             self.config["ultima_interfaz"] = nombre
-            save_config(self.config)
+            self.store.save_config(self.config)
         self._on_iface()
 
     def refrescar(self, select_default=False):
-        ifaces = netops.list_interfaces()
+        ifaces = self.ops.list_interfaces()
         actual = self._iface_name()
         self._map = {i["nombre"]: i["ip"] for i in ifaces}
         # El combo muestra también la IP para distinguir las interfaces de un vistazo
@@ -442,7 +277,7 @@ class MiniWidget:
 
     def _on_iface(self):
         nombre = self._iface_name()
-        cfg = netops.get_config(nombre) if nombre else \
+        cfg = self.ops.get_config(nombre) if nombre else \
             {"dhcp": False, "ip": "", "mask": "", "gw": "", "dns": ""}
         ip = cfg["ip"] or self._map.get(nombre, "")
         self._dhcp = cfg["dhcp"]
@@ -520,10 +355,10 @@ class MiniWidget:
         self._update_mode_buttons()
 
     def _ensure_admin(self):
-        if netops.is_admin():
+        if self.ops.is_admin():
             return True
         self._msg("Pidiendo permisos de administrador…", MUTED)
-        netops.relaunch_as_admin(__file__, {
+        self.ops.relaunch_as_admin(__file__, {
             "--iface": self._iface_name(),
             "--ip": self._val(self.ip),
             "--mask": self._val(self.mask),
@@ -531,29 +366,33 @@ class MiniWidget:
         })
         return False
 
-    def aplicar_ip(self):
+    def _aplicar_estrategia(self, estrategia):
+        """Camino común de aplicar red: interfaz elegida, admin, ejecutar la
+        estrategia (IPFija/DHCP) y reflejar el resultado. Devuelve ok."""
         nombre = self._iface_name()
         if not nombre:
-            return self._msg("Elige una interfaz", ERR)
+            self._msg("Elige una interfaz", ERR)
+            return False
         if not self._ensure_admin():
-            return
-        ok, msg = netops.set_static(nombre, self._val(self.ip),
-                                    self._val(self.mask) or "255.255.255.0",
-                                    self._val(self.gw), self._val(self.dns))
-        self._msg(("✔ " if ok else "✗ ") + msg, OK if ok else ERR)
+            return False
+        ok, msg = estrategia.aplicar(self.ops, nombre)
+        # Tres estados honestos: verde = éxito limpio; ámbar = aplicado pero con
+        # avisos (p.ej. gateway fuera de subred); rojo = no se aplicó (rechazo,
+        # error de netsh, o DNS a medias). Nunca "verde" ocultando un problema.
         if ok:
+            self._msg("✔ " + msg, WARN if "⚠" in msg else OK)
             self.refrescar()
+        else:
+            self._msg("✗ " + msg, ERR)
+        return ok
+
+    def aplicar_ip(self):
+        self._aplicar_estrategia(netops.IPFija(
+            self._val(self.ip), self._val(self.mask) or "255.255.255.0",
+            self._val(self.gw), self._val(self.dns)))
 
     def aplicar_dhcp(self):
-        nombre = self._iface_name()
-        if not nombre:
-            return self._msg("Elige una interfaz", ERR)
-        if not self._ensure_admin():
-            return
-        ok, msg = netops.set_dhcp(nombre)
-        self._msg(("✔ " if ok else "✗ ") + msg, OK if ok else ERR)
-        if ok:
-            self.refrescar()
+        if self._aplicar_estrategia(netops.DHCP()):
             # el servidor DHCP tarda un par de segundos en dar la IP nueva
             self.root.after(2500, self.refrescar)
             self.root.after(6000, self.refrescar)
@@ -564,7 +403,7 @@ class MiniWidget:
         self._put(self.mask, p.get("mask", "255.255.255.0"))
         self._put(self.gw, p.get("gw", ""))
         self._put(self.dns, p.get("dns", ""))
-        self.aplicar_ip()
+        self._aplicar_estrategia(netops.estrategia_de_perfil(p))
 
     # --- Escáner de dispositivos ---------------------------------------------
     def abrir_scanner(self):
@@ -614,7 +453,7 @@ class MiniWidget:
                 texto = d["ip"] + ("  (este PC)" if d["propia"] else "")
                 tk.Label(row, text=texto, bg=CARD, fg=TEXT, font=("Consolas", 9),
                          width=22, anchor="w").pack(side="left")
-                fabricante = OUI_CONOCIDOS.get(d["mac"][:8], "") if d["mac"] else ""
+                fabricante = self.ops.fabricante_mac(d["mac"])
                 partes_det = []
                 if es_dante:
                     nombre_d = d["dante"]
@@ -637,7 +476,7 @@ class MiniWidget:
                               ).pack(side="right", padx=8, pady=2)
 
         def escanear():
-            ip = netops.get_ip(nombre)
+            ip = self.ops.get_ip(nombre)
             if not ip:
                 estado.config(text="✗ La interfaz no tiene IP", fg=ERR)
                 return
@@ -645,7 +484,7 @@ class MiniWidget:
             btn_re.config(state="disabled")
 
             def trabajo():
-                dispositivos = netops.scan_red(nombre)
+                dispositivos = self.ops.scan_red(nombre)
                 def terminar():
                     if win.winfo_exists():
                         btn_re.config(state="normal")
@@ -670,7 +509,7 @@ class MiniWidget:
                  font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=16, pady=(14, 8))
 
         # Inicio con Windows
-        self.startup_var = tk.BooleanVar(value=in_startup())
+        self.startup_var = tk.BooleanVar(value=winsetup.in_startup())
         chk = tk.Checkbutton(win, text="Iniciar con Windows (siempre visible)",
                              variable=self.startup_var, bg=BG, fg=TEXT,
                              selectcolor=CARD, activebackground=BG, activeforeground=TEXT,
@@ -737,38 +576,20 @@ class MiniWidget:
             "gw": self._val(self.gw),
             "dns": self._val(self.dns),
         }
-        save_profiles(self.profiles)
+        self.store.save_profiles(self.profiles)
         self._render_config_profiles(win)
         self._render_profiles()
 
     def _borrar_perfil(self, nombre, win):
         self.profiles.pop(nombre, None)
-        save_profiles(self.profiles)
+        self.store.save_profiles(self.profiles)
         self._render_config_profiles(win)
         self._render_profiles()
 
     def _toggle_startup(self, win):
-        ok = set_startup(self.startup_var.get())
+        ok = winsetup.set_startup(self.startup_var.get())
         if not ok:
-            self.startup_var.set(in_startup())
-
-
-def _ya_corriendo():
-    """Evita instancias (e iconos de bandeja) duplicados."""
-    ctypes.windll.kernel32.CreateMutexW(None, False, "NetQuick_Instancia")
-    return ctypes.windll.kernel32.GetLastError() == 183  # ERROR_ALREADY_EXISTS
-
-
-def _dpi_awareness():
-    """Con escalado de Windows (125/150 %) Tkinter se ve borroso si el proceso
-    no declara conciencia de DPI. Declararla ANTES de crear la ventana."""
-    try:
-        ctypes.windll.shcore.SetProcessDpiAwareness(1)
-    except (AttributeError, OSError):
-        try:
-            ctypes.windll.user32.SetProcessDPIAware()
-        except (AttributeError, OSError):
-            pass
+            self.startup_var.set(winsetup.in_startup())
 
 
 def _args_relanzamiento():
@@ -782,7 +603,7 @@ def _args_relanzamiento():
 
 
 if __name__ == "__main__":
-    if not _ya_corriendo():
-        _dpi_awareness()
-        primer_arranque_exe()
-        MiniWidget()
+    if not winsetup.ya_corriendo():
+        winsetup.dpi_awareness()
+        winsetup.primer_arranque_exe()
+        MiniWidget().run()
