@@ -14,7 +14,7 @@ listan al final para no hacer cargo-cult.
 | 11. FoundationDB (sim. determinista) | **Sí, en miniatura** | Fuzzing con semilla fija → todo hallazgo reproducible (Issue E) |
 | 12. CrystalNet (clonar la red) | **Sí, en miniatura** | Backend `SimOps`/dry-run que ensaya sin tocar el adaptador (Issue C) |
 | 16. Erlang "let it crash" + supervisor | **Sí** | Supervisar el hilo del escáner: hoy un fallo lo deja colgado (Issue B) |
-| 17/18. Plano de control corre elevado | **Sí (seguridad)** | `task.xml` en dir escribible → EoP; confirmar y blindar (Issue F) |
+| 17/18. Plano de control corre elevado | **Sí (seguridad)** | Hallazgo de seguridad del arranque elevado — se maneja en privado (Issue F) |
 | Knight Capital / deploy gradual + rollback | **Sí, en miniatura** | Rollback ensayado del .exe + probar el camino de arranque poco ejercitado (Issue G) |
 | 13. Zelkova/Tiros (SMT, alcanzabilidad) | **No** | Overkill; la pregunta de red aquí es un escaneo LAN, no verificar políticas. El aviso "gateway fuera de subred" ya cubre lo útil. |
 | 14. B4 (SDN WAN al 100%) | **No** | Sin relación con una app de escritorio. |
@@ -101,20 +101,14 @@ de Hypothesis versionada para que un fallo se reproduzca al instante.
   y el paso en CI.
 - Aceptación: la suite property-based corre en CI de forma determinista.
 
-## Issue F — EoP: `task.xml` en directorio escribible por el usuario
-**Lección 17/18 (el plano de control corre elevado; auto-config con privilegios).**
-Prioridad: media (seguridad). Etiquetas: `seguridad`.
+## Issue F — Hallazgo de seguridad (se maneja en privado)
+**Lección 17/18 (el plano de control corre elevado).** Prioridad: media (seguridad).
 
-Es el FM-5 de la revisión formal. El proceso corre elevado y escribe `task.xml`
-en `%APPDATA%\NetQuick` (escribible por el usuario) antes de pasarlo a
-`schtasks /Create /XML` — ventana TOCTOU para inyectar una tarea elevada.
-
-- Antes de arreglar: correr el experimento de carrera para confirmar
-  explotabilidad (proceso no-admin reescribiendo el XML vs. la app elevada).
-- Fix si se confirma: escribir el XML en un dir con ACL solo-admin (`%ProgramData%`
-  con permisos) o construir la tarea sin XML intermedio.
-- Aceptación: el XML que consume `schtasks` no es escribible por un proceso sin
-  privilegios; experimento de carrera no logra inyectar.
+Se identificó un vector de elevación de privilegios local en el flujo de
+auto-arranque elevado (FM-5 de la revisión formal). Los detalles del vector y el
+experimento de confirmación **no se documentan en este repo público**: se
+manejan en privado hasta confirmarlo y blindarlo. Archivar como issue con los
+detalles cuando el repositorio pase a privado.
 
 ## Issue G — Rollback ensayado del release y camino de arranque poco probado
 **Lección Knight Capital + Meta (deploy gradual, rollback ensayado, no reutilizar
@@ -148,9 +142,8 @@ De las lecciones AT&T 1990 / Facebook 2021 / Cloudflare 2019 / Rogers 2022:
   *recovery*). Refuerza #29: el camino de reversión se ejecuta solo cuando algo
   ya salió mal, así que es el que más pruebas necesita.
 
-Nota: el hallazgo de seguridad FM-5 (EoP de `task.xml`) se maneja en privado;
-archivar como issue cuando el repo pase a privado y/o tras confirmar con el
-experimento de carrera.
+Nota: el hallazgo de seguridad FM-5 se maneja en privado; archivar como issue
+con los detalles cuando el repo pase a privado y/o tras confirmarlo.
 
 ### Lecciones descartadas (por qué NO aplican)
 - **Zelkova/Tiros (SMT):** verificación formal de políticas; NetQuick no tiene
