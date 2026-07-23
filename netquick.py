@@ -36,8 +36,9 @@ CARD = "#F3F4F6"          # gris claro (campos, botones secundarios)
 CARD_HOVER = "#E5E7EB"
 TEXT = "#1F2937"          # texto principal oscuro
 MUTED = "#6B7280"         # texto secundario
-OK = "#2E7D32"            # verde estado
-ERR = "#E53935"           # rojo estado / errores
+OK = "#2E7D32"            # verde estado (éxito limpio)
+WARN = "#B45309"          # ámbar (aplicado, pero con avisos)
+ERR = "#E53935"           # rojo estado / errores (no se aplicó)
 
 class MiniWidget:
     def __init__(self, ops=netops, store_mod=store):
@@ -375,9 +376,14 @@ class MiniWidget:
         if not self._ensure_admin():
             return False
         ok, msg = estrategia.aplicar(self.ops, nombre)
-        self._msg(("✔ " if ok else "✗ ") + msg, OK if ok else ERR)
+        # Tres estados honestos: verde = éxito limpio; ámbar = aplicado pero con
+        # avisos (p.ej. gateway fuera de subred); rojo = no se aplicó (rechazo,
+        # error de netsh, o DNS a medias). Nunca "verde" ocultando un problema.
         if ok:
+            self._msg("✔ " + msg, WARN if "⚠" in msg else OK)
             self.refrescar()
+        else:
+            self._msg("✗ " + msg, ERR)
         return ok
 
     def aplicar_ip(self):

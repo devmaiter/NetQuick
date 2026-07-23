@@ -210,6 +210,41 @@ def test_set_static_loggea_ok_con_duracion(monkeypatch, caplog):
     assert "resultado=ok" in linea and "dur_ms=" in linea
 
 
+# --- #22: no reportar éxito con la config a medias (lección Rogers 2022) ------
+def test_set_static_dns_a_medias_no_reporta_exito(monkeypatch):
+    """Si la IP se aplica pero el DNS falla, la transacción NO es un éxito
+    limpio: ok=False, y el mensaje deja claro que la IP sí y el DNS no."""
+    monkeypatch.setattr(netops, "ip_en_uso", lambda ip: False)
+    monkeypatch.setattr(netops, "run",
+                        lambda cmd, quiet=False:
+                        _RunFalso(1) if "dns" in cmd else _RunFalso(0))
+    ok, msg = netops.set_static("Ethernet", "10.0.0.5", "255.255.255.0",
+                                "", "8.8.8.8")
+    assert ok is False
+    assert "IP 10.0.0.5 aplicada" in msg and "DNS" in msg
+
+
+def test_set_static_dns_a_medias_loggea_parcial(monkeypatch, caplog):
+    monkeypatch.setattr(netops, "ip_en_uso", lambda ip: False)
+    monkeypatch.setattr(netops, "run",
+                        lambda cmd, quiet=False:
+                        _RunFalso(1) if "dns" in cmd else _RunFalso(0))
+    with caplog.at_level("INFO", logger="netquick"):
+        netops.set_static("Ethernet", "10.0.0.5", "255.255.255.0", "", "8.8.8.8")
+    assert "resultado=parcial" in "".join(r.message for r in caplog.records)
+
+
+def test_set_static_gateway_fuera_de_subred_es_aviso_no_fallo(monkeypatch):
+    """Gateway fuera de la subred SÍ es un éxito (puede ser intencional): la
+    IP se aplicó; queda como aviso, no como fallo."""
+    monkeypatch.setattr(netops, "ip_en_uso", lambda ip: False)
+    monkeypatch.setattr(netops, "run", lambda cmd, quiet=False: _RunFalso(0))
+    ok, msg = netops.set_static("Ethernet", "10.0.0.5", "255.255.255.0",
+                                "192.168.99.1", "")
+    assert ok is True
+    assert "gateway fuera de la subred" in msg
+
+
 # --- Estrategias -------------------------------------------------------------
 class _OpsRegistro:
     """Doble mínimo: registra qué operación se pidió y con qué argumentos."""

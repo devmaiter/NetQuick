@@ -506,18 +506,25 @@ def set_static(nombre, ip, mask, gw=None, dns=None):
                 iface=nombre, ip=ip)
         return False, (detalle or "Error (¿admin?)")
     avisos = []
+    dns_ok = True
     if dns:
         r2 = run(["netsh", "interface", "ip", "set", "dns",
                   f"name={nombre}", "static", dns])
         if not (r2 and r2.returncode == 0):
-            avisos.append("⚠ el DNS no se pudo aplicar")
+            dns_ok = False
+            avisos.append("el DNS no se pudo aplicar")
     if gw:
         red = ipaddress.ip_network(f"{ip}/{mask}", strict=False)
         if ipaddress.IPv4Address(gw) not in red:
-            avisos.append("⚠ gateway fuera de la subred")
-    _log_op("set_static", "ok", " ".join(avisos), _dur(),
+            avisos.append("gateway fuera de la subred")
+    # Lección Rogers 2022: una operación que deja el sistema a medias no debe
+    # reportar éxito limpio. Si se pidió DNS y falló, la transacción no logró su
+    # objetivo -> ok=False (el gateway fuera de subred sí es solo un aviso).
+    resultado = "ok" if dns_ok else "parcial"
+    _log_op("set_static", resultado, " ".join(avisos), _dur(),
             iface=nombre, ip=ip, mask=mask, gw=gw, dns=dns)
-    return True, "  ".join([f"IP {ip} aplicada", *avisos])
+    msg = "  ".join([f"IP {ip} aplicada", *(f"⚠ {a}" for a in avisos)])
+    return dns_ok, msg
 
 
 def set_dhcp(nombre):
