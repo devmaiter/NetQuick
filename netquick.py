@@ -216,7 +216,10 @@ def primer_arranque_exe():
 
 
 class MiniWidget:
-    def __init__(self):
+    def __init__(self, ops=netops):
+        # Las operaciones de red se inyectan: en la app es el módulo netops,
+        # en los tests un doble que no toca el sistema.
+        self.ops = ops
         self.root = tk.Tk()
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
@@ -247,6 +250,8 @@ class MiniWidget:
         self.tray = None
         if TRAY_DISPONIBLE:
             self._init_tray()
+
+    def run(self):
         self.root.mainloop()
 
     def _place_bottom_right(self):
@@ -422,7 +427,7 @@ class MiniWidget:
         self._on_iface()
 
     def refrescar(self, select_default=False):
-        ifaces = netops.list_interfaces()
+        ifaces = self.ops.list_interfaces()
         actual = self._iface_name()
         self._map = {i["nombre"]: i["ip"] for i in ifaces}
         # El combo muestra también la IP para distinguir las interfaces de un vistazo
@@ -442,7 +447,7 @@ class MiniWidget:
 
     def _on_iface(self):
         nombre = self._iface_name()
-        cfg = netops.get_config(nombre) if nombre else \
+        cfg = self.ops.get_config(nombre) if nombre else \
             {"dhcp": False, "ip": "", "mask": "", "gw": "", "dns": ""}
         ip = cfg["ip"] or self._map.get(nombre, "")
         self._dhcp = cfg["dhcp"]
@@ -520,10 +525,10 @@ class MiniWidget:
         self._update_mode_buttons()
 
     def _ensure_admin(self):
-        if netops.is_admin():
+        if self.ops.is_admin():
             return True
         self._msg("Pidiendo permisos de administrador…", MUTED)
-        netops.relaunch_as_admin(__file__, {
+        self.ops.relaunch_as_admin(__file__, {
             "--iface": self._iface_name(),
             "--ip": self._val(self.ip),
             "--mask": self._val(self.mask),
@@ -537,7 +542,7 @@ class MiniWidget:
             return self._msg("Elige una interfaz", ERR)
         if not self._ensure_admin():
             return
-        ok, msg = netops.set_static(nombre, self._val(self.ip),
+        ok, msg = self.ops.set_static(nombre, self._val(self.ip),
                                     self._val(self.mask) or "255.255.255.0",
                                     self._val(self.gw), self._val(self.dns))
         self._msg(("✔ " if ok else "✗ ") + msg, OK if ok else ERR)
@@ -550,7 +555,7 @@ class MiniWidget:
             return self._msg("Elige una interfaz", ERR)
         if not self._ensure_admin():
             return
-        ok, msg = netops.set_dhcp(nombre)
+        ok, msg = self.ops.set_dhcp(nombre)
         self._msg(("✔ " if ok else "✗ ") + msg, OK if ok else ERR)
         if ok:
             self.refrescar()
@@ -637,7 +642,7 @@ class MiniWidget:
                               ).pack(side="right", padx=8, pady=2)
 
         def escanear():
-            ip = netops.get_ip(nombre)
+            ip = self.ops.get_ip(nombre)
             if not ip:
                 estado.config(text="✗ La interfaz no tiene IP", fg=ERR)
                 return
@@ -645,7 +650,7 @@ class MiniWidget:
             btn_re.config(state="disabled")
 
             def trabajo():
-                dispositivos = netops.scan_red(nombre)
+                dispositivos = self.ops.scan_red(nombre)
                 def terminar():
                     if win.winfo_exists():
                         btn_re.config(state="normal")
@@ -785,4 +790,4 @@ if __name__ == "__main__":
     if not _ya_corriendo():
         _dpi_awareness()
         primer_arranque_exe()
-        MiniWidget()
+        MiniWidget().run()
