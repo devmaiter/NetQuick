@@ -20,12 +20,14 @@ import netquick
 class FakeOps:
     """Mismo contrato que netops, con respuestas fijas y registro de llamadas."""
 
-    def __init__(self, dhcp=False, interfaces=None):
+    def __init__(self, dhcp=False, interfaces=None, gw_responde=True):
         self.dhcp = dhcp
         self.interfaces = interfaces if interfaces is not None else \
             [{"nombre": "Ethernet", "ip": "10.0.0.5"}]
+        self.gw_responde = gw_responde
         self.static_llamado = None
         self.dhcp_llamado = None
+        self.revert_llamado = None
 
     def list_interfaces(self):
         return self.interfaces
@@ -50,6 +52,13 @@ class FakeOps:
 
     def fabricante_mac(self, mac):
         return ""
+
+    def gateway_responde(self, gw):
+        return self.gw_responde
+
+    def revertir_a(self, nombre, previa):
+        self.revert_llamado = (nombre, previa)
+        return True, f"Revertido a {previa.get('ip', '')}"
 
 
 class FakeStore:
@@ -170,3 +179,77 @@ def test_editar_campo_enciende_aplicar(widget):
     w._update_mode_buttons()
     assert str(w.btn_aplicar["state"]) == "normal"
     assert w.btn_aplicar["text"] == "Aplicar IP"
+
+
+# --- #21: aplicar → sin confirmación → auto-revert ----------------------------
+def _aplicar_ip_mala(w):
+    """Aplica una IP fija cuyo gateway no va a responder."""
+    w._put(w.ip, "192.168.99.50")
+    w._put(w.mask, "255.255.255.0")
+    w._put(w.gw, "192.168.99.1")
+    w._put(w.dns, "")
+    w.aplicar_ip()
+
+
+def test_config_sin_salida_arma_cuenta_regresiva(monkeypatch):
+    w, _ = _crear(monkeypatch, gw_responde=False)
+    try:
+        _aplicar_ip_mala(w)
+        assert w._revert_previa is not None
+        assert w.revert_frame.winfo_manager()          # la barra está visible
+        assert "Mantener" in w.btn_mantener["text"]
+    finally:
+        w.root.destroy()
+
+
+def test_sin_confirmacion_revierte_a_la_config_previa(monkeypatch):
+    """El criterio de aceptación del issue: aplicar a propósito una config
+    sin salida y dejar vencer el temporizador revierte sola."""
+    w, fake = _crear(monkeypatch, gw_responde=False)
+    try:
+        _aplicar_ip_mala(w)
+        w._revert_restante = 0                          # vence el temporizador
+        w._revert_tick()
+        nombre, previa = fake.revert_llamado
+        assert nombre == "Ethernet"
+        assert previa["ip"] == "10.0.0.5"               # la config de antes
+        assert w._revert_previa is None
+        assert not w.revert_frame.winfo_manager()       # la barra se ocultó
+        assert "restaurada" in w.status["text"]
+    finally:
+        w.root.destroy()
+
+
+def test_confirmar_mantiene_el_cambio(monkeypatch):
+    w, fake = _crear(monkeypatch, gw_responde=False)
+    try:
+        _aplicar_ip_mala(w)
+        w._confirmar_cambio()
+        assert fake.revert_llamado is None
+        assert w._revert_previa is None
+        assert "confirmado" in w.status["text"]
+    finally:
+        w.root.destroy()
+
+
+def test_gateway_que_responde_no_pregunta(monkeypatch):
+    w, _ = _crear(monkeypatch, gw_responde=True)
+    try:
+        _aplicar_ip_mala(w)
+        assert w._revert_previa is None
+        assert not w.revert_frame.winfo_manager()
+    finally:
+        w.root.destroy()
+
+
+def test_aplicar_dhcp_cancela_la_cuenta_regresiva(monkeypatch):
+    """El botón DHCP es el rescate manual: usarlo anula el auto-revert."""
+    w, fake = _crear(monkeypatch, gw_responde=False)
+    try:
+        _aplicar_ip_mala(w)
+        assert w._revert_previa is not None
+        w.aplicar_dhcp()
+        assert w._revert_previa is None
+        assert fake.revert_llamado is None
+    finally:
+        w.root.destroy()

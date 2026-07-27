@@ -245,6 +245,120 @@ def test_set_static_gateway_fuera_de_subred_es_aviso_no_fallo(monkeypatch):
     assert "gateway fuera de la subred" in msg
 
 
+# --- #20 / FM-2: verificar_ip con sonda ARP dirigida --------------------------
+ARP_CON_OBJETIVO = """
+Interfaz: 10.0.0.5 --- 0x10
+  10.0.0.9              aa-bb-cc-00-11-22     dinámico
+"""
+
+
+def _sin_ttl(cmd, quiet=False):
+    """run() falso: ping sin respuesta y caché ARP vacía."""
+    return _RunFalso(1 if cmd[0] == "ping" else 0, "")
+
+
+def test_verificar_ip_equipo_silencioso_aparece_tras_sonda_arp(monkeypatch):
+    """El escenario FM-2: encendido, calla al ping y NO está aún en ARP.
+    La sonda ARP dirigida lo hace aparecer -> en_uso (antes: falso negativo)."""
+    import ipaddress
+    llamadas = {"arp": 0}
+
+    def run_falso(cmd, quiet=False):
+        if cmd[0] == "ping":
+            return _RunFalso(1, "")
+        llamadas["arp"] += 1
+        # La 1ª lectura de ARP viene vacía; tras _provocar_arp ya aparece
+        return _RunFalso(0, ARP_CON_OBJETIVO if llamadas["arp"] > 1 else "")
+
+    monkeypatch.setattr(netops, "list_interfaces", lambda: [])
+    monkeypatch.setattr(netops, "run", run_falso)
+    monkeypatch.setattr(netops, "_provocar_arp", lambda ip: None)
+    monkeypatch.setattr(netops, "_subredes_locales",
+                        lambda: [ipaddress.ip_network("10.0.0.0/24")])
+    assert netops.verificar_ip("10.0.0.9") == "en_uso"
+
+
+def test_verificar_ip_libre_en_subred_local(monkeypatch):
+    import ipaddress
+    monkeypatch.setattr(netops, "list_interfaces", lambda: [])
+    monkeypatch.setattr(netops, "run", _sin_ttl)
+    monkeypatch.setattr(netops, "_provocar_arp", lambda ip: None)
+    monkeypatch.setattr(netops, "_subredes_locales",
+                        lambda: [ipaddress.ip_network("10.0.0.0/24")])
+    assert netops.verificar_ip("10.0.0.9") == "libre"
+
+
+def test_verificar_ip_fuera_de_subred_no_finge_certeza(monkeypatch):
+    """Fuera de las subredes locales no hay ARP posible: si el ping calla,
+    la respuesta honesta es 'sin_verificar', no 'libre'."""
+    monkeypatch.setattr(netops, "list_interfaces", lambda: [])
+    monkeypatch.setattr(netops, "run", _sin_ttl)
+    monkeypatch.setattr(netops, "_subredes_locales", lambda: [])
+    assert netops.verificar_ip("192.168.77.9") == "sin_verificar"
+
+
+def test_verificar_ip_propia_es_libre(monkeypatch):
+    monkeypatch.setattr(netops, "list_interfaces",
+                        lambda: [{"nombre": "Ethernet", "ip": "10.0.0.5"}])
+    assert netops.verificar_ip("10.0.0.5") == "libre"
+
+
+def test_set_static_sin_verificar_aplica_con_aviso(monkeypatch):
+    monkeypatch.setattr(netops, "verificar_ip", lambda ip: "sin_verificar")
+    monkeypatch.setattr(netops, "run", lambda cmd, quiet=False: _RunFalso(0))
+    ok, msg = netops.set_static("Ethernet", "192.168.77.9", "255.255.255.0")
+    assert ok is True
+    assert "no se pudo verificar" in msg
+
+
+# --- #21: revert de emergencia y verificación de gateway ----------------------
+def test_gateway_responde_exige_ttl(monkeypatch):
+    monkeypatch.setattr(netops, "run",
+                        lambda cmd, quiet=False: _RunFalso(0, "Respuesta TTL=64"))
+    assert netops.gateway_responde("10.0.0.1")
+    monkeypatch.setattr(netops, "run",
+                        lambda cmd, quiet=False: _RunFalso(0, "inaccesible"))
+    assert not netops.gateway_responde("10.0.0.1")
+    assert not netops.gateway_responde("")
+
+
+def test_revertir_a_estatica_usa_netsh_directo_sin_verificar_ip(monkeypatch):
+    """El rescate va por el camino más tonto posible: netsh directo, sin
+    pasar por verificar_ip ni validación (la config previa ya estuvo puesta)."""
+    comandos = []
+
+    def run_falso(cmd, quiet=False):
+        comandos.append(cmd)
+        return _RunFalso(0)
+
+    def _boom(ip):
+        raise AssertionError("el revert no debe consultar la red")
+
+    monkeypatch.setattr(netops, "run", run_falso)
+    monkeypatch.setattr(netops, "verificar_ip", _boom)
+    ok, _ = netops.revertir_a("Ethernet", {
+        "dhcp": False, "ip": "10.0.0.5", "mask": "255.255.255.0",
+        "gw": "10.0.0.1", "dns": "8.8.8.8"})
+    assert ok
+    assert comandos[0] == ["netsh", "interface", "ip", "set", "address",
+                           "name=Ethernet", "static", "10.0.0.5",
+                           "255.255.255.0", "10.0.0.1", "1"]
+    assert comandos[1][:6] == ["netsh", "interface", "ip", "set", "dns",
+                               "name=Ethernet"]
+
+
+def test_revertir_a_dhcp_o_sin_datos_cae_a_dhcp(monkeypatch):
+    comandos = []
+    monkeypatch.setattr(netops, "run",
+                        lambda cmd, quiet=False: comandos.append(cmd)
+                        or _RunFalso(0))
+    ok, _ = netops.revertir_a("Ethernet", {"dhcp": True})
+    assert ok and "dhcp" in comandos[0]
+    comandos.clear()
+    ok, _ = netops.revertir_a("Ethernet", {})   # previa vacía: conocido-bueno
+    assert ok and "dhcp" in comandos[0]
+
+
 # --- Estrategias -------------------------------------------------------------
 class _OpsRegistro:
     """Doble mínimo: registra qué operación se pidió y con qué argumentos."""

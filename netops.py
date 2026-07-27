@@ -287,23 +287,77 @@ def _parsear_arp(texto, red=None):
     return tabla
 
 
-def ip_en_uso(ip):
-    """True si otro dispositivo de la red ya responde en esa IP.
+def _subredes_locales():
+    """Redes IPv4 directamente conectadas (según IP/máscara de cada
+    interfaz activa). Solo dentro de ellas tiene sentido preguntar por ARP."""
+    redes = []
+    try:
+        for direcc in psutil.net_if_addrs().values():
+            for d in direcc:
+                if d.family.name == "AF_INET" and d.netmask:
+                    try:
+                        redes.append(ipaddress.ip_network(
+                            f"{d.address}/{d.netmask}", strict=False))
+                    except ValueError:
+                        continue
+    except Exception:
+        pass
+    return redes
 
-    Comprueba con un ping corto y, por si el otro equipo bloquea ping
-    (firewall), revisa también la caché ARP que el propio ping refresca.
+
+def _provocar_arp(ip):
+    """Fuerza al SO a resolver la MAC de ip: un datagrama UDP a un puerto
+    cualquiera dispara la petición ARP aunque el destino calle al ping.
+    Espera breve para que la respuesta llegue a la caché. No requiere admin."""
+    import socket
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.sendto(b"", (ip, 9))  # puerto discard; el contenido da igual
+        s.close()
+    except OSError:
+        pass
+    time.sleep(0.4)
+
+
+def _ip_en_arp(ip):
+    res = run(["arp", "-a"])
+    return bool(res and ip in _parsear_arp(res.stdout))
+
+
+def verificar_ip(ip):
+    """Veredicto sobre una IP antes de aplicarla (issue #20 / FM-2):
+    'en_uso', 'libre' o 'sin_verificar'.
+
+    Un equipo con firewall que calla al ping igual TIENE que responder ARP,
+    así que dentro de la subred local se fuerza una sonda ARP dirigida y se
+    relee la caché antes de darla por libre. Fuera de las subredes locales
+    no hay ARP posible: si tampoco responde a ping, la evidencia es débil
+    y se dice 'sin_verificar' en vez de fingir certeza.
     Las IPs de esta misma máquina no cuentan como conflicto.
     """
     ip = ip.strip()
     for i in list_interfaces():
         if i["ip"] == ip:
-            return False
+            return "libre"
     res = run(["ping", "-n", "1", "-w", "400", ip], quiet=True)
     # returncode 0 con "unreachable" también existe: exigir respuesta real (TTL)
     if res and res.returncode == 0 and "ttl=" in (res.stdout or "").lower():
-        return True
-    res = run(["arp", "-a"])
-    return bool(res and ip in _parsear_arp(res.stdout))
+        return "en_uso"
+    if _ip_en_arp(ip):
+        return "en_uso"
+    try:
+        direccion = ipaddress.IPv4Address(ip)
+    except ipaddress.AddressValueError:
+        return "sin_verificar"
+    if any(direccion in red for red in _subredes_locales()):
+        _provocar_arp(ip)
+        return "en_uso" if _ip_en_arp(ip) else "libre"
+    return "sin_verificar"
+
+
+def ip_en_uso(ip):
+    """True si otro dispositivo de la red ya responde en esa IP."""
+    return verificar_ip(ip) == "en_uso"
 
 
 # --- Descubrimiento Dante (mDNS) --------------------------------------------
@@ -493,7 +547,8 @@ def set_static(nombre, ip, mask, gw=None, dns=None):
     if error:
         _log_op("set_static", "rechazo", error, _dur(), iface=nombre, ip=ip)
         return False, error
-    if ip_en_uso(ip):
+    veredicto = verificar_ip(ip)
+    if veredicto == "en_uso":
         _log_op("set_static", "rechazo", "ip_en_uso", _dur(), iface=nombre, ip=ip)
         return False, f"⚠ {ip} ya está en uso — no se aplicó nada"
     cmd = ["netsh", "interface", "ip", "set", "address", f"name={nombre}", "static", ip, mask]
@@ -506,6 +561,8 @@ def set_static(nombre, ip, mask, gw=None, dns=None):
                 iface=nombre, ip=ip)
         return False, (detalle or "Error (¿admin?)")
     avisos = []
+    if veredicto == "sin_verificar":
+        avisos.append(f"no se pudo verificar que {ip} estuviera libre")
     dns_ok = True
     if dns:
         r2 = run(["netsh", "interface", "ip", "set", "dns",
@@ -539,6 +596,49 @@ def set_dhcp(nombre):
     detalle = ((r1.stderr or r1.stdout) or "").strip() if r1 else ""
     _log_op("set_dhcp", "error", detalle or "netsh_fallo", dur_ms, iface=nombre)
     return False, (detalle or "Error (¿admin?)")
+
+
+def gateway_responde(gw):
+    """True si el gateway contesta a un ping corto: conectividad básica
+    verificada tras aplicar una IP fija (issue #21)."""
+    if not gw:
+        return False
+    res = run(["ping", "-n", "1", "-w", "700", gw], quiet=True)
+    return bool(res and res.returncode == 0
+                and "ttl=" in (res.stdout or "").lower())
+
+
+def revertir_a(nombre, previa):
+    """Camino de emergencia (issue #21, lección Meta 2021): volver a la
+    configuración previa por la vía más simple posible. netsh directo, sin
+    validación ni verificar_ip — la herramienta de rescate no puede depender
+    de la red que acaba de romperse, y la config previa ya estuvo aplicada.
+    Devuelve (ok, mensaje)."""
+    t0 = time.perf_counter()
+    previa = previa or {}
+    ip, mask = previa.get("ip", ""), previa.get("mask", "")
+    if previa.get("dhcp") or not (ip and mask):
+        # Sin datos fiables: DHCP es el estado conocido-bueno más simple
+        ok, msg = set_dhcp(nombre)
+        _log_op("revert", "ok" if ok else "error", "via_dhcp",
+                round((time.perf_counter() - t0) * 1000), iface=nombre)
+        return ok, msg
+    cmd = ["netsh", "interface", "ip", "set", "address",
+           f"name={nombre}", "static", ip, mask]
+    if previa.get("gw"):
+        cmd += [previa["gw"], "1"]
+    res = run(cmd)
+    if previa.get("dns"):
+        run(["netsh", "interface", "ip", "set", "dns",
+             f"name={nombre}", "static", previa["dns"]])
+    dur_ms = round((time.perf_counter() - t0) * 1000)
+    if res and res.returncode == 0:
+        _log_op("revert", "ok", "", dur_ms, iface=nombre, ip=ip)
+        return True, f"Revertido a {ip}"
+    detalle = ((res.stderr or res.stdout) or "").strip() if res else ""
+    _log_op("revert", "error", detalle or "netsh_fallo", dur_ms,
+            iface=nombre, ip=ip)
+    return False, (detalle or "No se pudo revertir")
 
 
 # --- Estrategias de aplicación ----------------------------------------------

@@ -54,6 +54,8 @@ class MiniWidget:
         self.config = self.store.load_config()
         self._map = {}
         self._display = {}
+        self._revert_previa = None
+        self._revert_after = None
 
         outer = tk.Frame(self.root, bg=ACCENT)
         outer.pack(fill="both", expand=True, padx=2, pady=2)
@@ -66,6 +68,7 @@ class MiniWidget:
         self.status = tk.Label(self.card, text="Listo", bg=BG, fg=MUTED,
                                font=("Segoe UI", 8, "bold"), anchor="w")
         self.status.pack(fill="x", padx=12, pady=(0, 2))
+        self._build_revert_frame()
         tk.Label(self.card, text="© 2026 Oscar Julián Osorio & Israel Moncayo",
                  bg=BG, fg="#B9BFC7", font=("Segoe UI", 7), anchor="e"
                  ).pack(fill="x", padx=12, pady=(0, 5))
@@ -337,6 +340,68 @@ class MiniWidget:
     def _msg(self, texto, color=MUTED):
         self.status.config(text=texto, fg=color)
 
+    # --- Confirmación con auto-revert (issue #21) ---------------------------
+    def _build_revert_frame(self):
+        """Barra oculta que aparece tras aplicar IP fija sin salida verificada:
+        si el usuario no confirma antes de que venza la cuenta, se revierte."""
+        self.revert_frame = tk.Frame(self.card, bg=BG)
+        tk.Label(self.revert_frame, text="¿Sigues conectado?", bg=BG, fg=WARN,
+                 font=("Segoe UI", 8, "bold")).pack(side="left")
+        self.btn_mantener = tk.Button(self.revert_frame, text="✔ Mantener cambio",
+                                      bg=WARN, fg="white", bd=0,
+                                      activebackground="#92400E",
+                                      activeforeground="white",
+                                      font=("Segoe UI", 8, "bold"), cursor="hand2",
+                                      command=self._confirmar_cambio)
+        self.btn_mantener.pack(side="right", ipadx=8, ipady=1)
+
+    def _armar_confirmacion(self, nombre, previa, gw):
+        """Lección Meta 2021: la herramienta que rompe la red no puede ser el
+        único rescate. Tras aplicar IP fija se verifica la salida (ping al
+        gateway); si no se puede confirmar conectividad, cuenta regresiva al
+        estilo del cambio de resolución de Windows — sin confirmación humana,
+        se vuelve solo a la config previa (revert 100 % local)."""
+        if gw and self.ops.gateway_responde(gw):
+            return  # salida verificada: el cambio se queda sin preguntar
+        self._revert_previa = (nombre, previa)
+        self._revert_restante = 30
+        self.revert_frame.pack(fill="x", padx=12, pady=(0, 4),
+                               before=self.status)
+        self._revert_tick()
+
+    def _revert_tick(self):
+        if self._revert_previa is None:
+            return
+        if self._revert_restante <= 0:
+            return self._revertir_ahora()
+        self.btn_mantener.config(
+            text=f"✔ Mantener cambio ({self._revert_restante} s)")
+        self._revert_restante -= 1
+        self._revert_after = self.root.after(1000, self._revert_tick)
+
+    def _cancelar_confirmacion(self):
+        if self._revert_after:
+            self.root.after_cancel(self._revert_after)
+            self._revert_after = None
+        self._revert_previa = None
+        self.revert_frame.pack_forget()
+
+    def _confirmar_cambio(self):
+        self._cancelar_confirmacion()
+        self._msg("✔ Cambio confirmado", OK)
+
+    def _revertir_ahora(self):
+        nombre, previa = self._revert_previa
+        self._cancelar_confirmacion()
+        ok, _ = self.ops.revertir_a(nombre, previa)
+        self.refrescar()
+        # después de refrescar: _on_iface pisa el status con el estado normal
+        if ok:
+            self._msg("⏪ Sin confirmación a tiempo: config anterior restaurada",
+                      WARN)
+        else:
+            self._msg("✗ No se pudo revertir — revisa la red", ERR)
+
     def _repoblar_tras_relanzar(self):
         """Si venimos de un relanzamiento como admin, restaurar la interfaz
         elegida y lo que el usuario había tecleado (issue #17)."""
@@ -375,6 +440,10 @@ class MiniWidget:
             return False
         if not self._ensure_admin():
             return False
+        # Aplicar algo nuevo (incluido el botón DHCP como rescate manual)
+        # anula cualquier cuenta regresiva pendiente.
+        self._cancelar_confirmacion()
+        previa = self.ops.get_config(nombre)
         ok, msg = estrategia.aplicar(self.ops, nombre)
         # Tres estados honestos: verde = éxito limpio; ámbar = aplicado pero con
         # avisos (p.ej. gateway fuera de subred); rojo = no se aplicó (rechazo,
@@ -382,6 +451,8 @@ class MiniWidget:
         if ok:
             self._msg("✔ " + msg, WARN if "⚠" in msg else OK)
             self.refrescar()
+            if isinstance(estrategia, netops.IPFija):
+                self._armar_confirmacion(nombre, previa, estrategia.gw)
         else:
             self._msg("✗ " + msg, ERR)
         return ok
