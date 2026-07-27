@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Tests de winsetup que no tocan el sistema (XML de la tarea programada)."""
+"""Tests of winsetup that don't touch the system (scheduled-task XML)."""
 import os
 import sys
 
@@ -8,14 +8,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import winsetup
 
 
-def test_task_xml_contiene_el_exe():
+def test_task_xml_contains_the_exe():
     xml = winsetup._task_xml(r"C:\Program Files\NetQuick\NetQuick.exe")
     assert r"<Command>C:\Program Files\NetQuick\NetQuick.exe</Command>" in xml
 
 
-def test_task_xml_arranca_elevada_y_sin_limites():
-    # Regresión del XML que costó afinar: elevada al iniciar sesión, sin
-    # límite de tiempo de ejecución ni restricciones de batería.
+def test_task_xml_starts_elevated_and_without_limits():
+    # Regression of the XML that took effort to tune: elevated at logon, no
+    # execution-time limit and no battery restrictions.
     xml = winsetup._task_xml("x.exe")
     assert "<RunLevel>HighestAvailable</RunLevel>" in xml
     assert "<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>" in xml
@@ -23,28 +23,28 @@ def test_task_xml_arranca_elevada_y_sin_limites():
     assert "<LogonTrigger><Enabled>true</Enabled></LogonTrigger>" in xml
 
 
-# --- FM-5: el task.xml se escribe en carpeta solo-admin, no en %APPDATA% ------
-def test_dir_del_xml_no_es_escribible_por_el_usuario():
-    """El XML debe generarse bajo %SystemRoot%\\Temp (solo admin/SYSTEM), no en
-    %APPDATA% (escribible por el usuario) — cierre de la ventana TOCTOU."""
-    carpeta = winsetup._dir_solo_admin().lower()
+# --- FM-5: the task.xml is written in an admin-only folder, not %APPDATA% ----
+def test_xml_dir_is_not_user_writable():
+    """The XML must be generated under %SystemRoot%\\Temp (admin/SYSTEM only),
+    not in %APPDATA% (user-writable) — closing the TOCTOU window."""
+    folder = winsetup._admin_only_dir().lower()
     system_root = os.environ.get("SystemRoot", r"C:\Windows").lower()
-    assert carpeta.startswith(system_root)
-    assert "appdata" not in carpeta
+    assert folder.startswith(system_root)
+    assert "appdata" not in folder
 
 
-def test_crear_tarea_escribe_el_xml_en_dir_solo_admin(monkeypatch, tmp_path):
-    """Verifica que _crear_tarea_inicio pasa a schtasks un XML ubicado en la
-    carpeta solo-admin, con el exe dentro, y que lo borra al terminar."""
-    monkeypatch.setattr(winsetup, "_dir_solo_admin", lambda: str(tmp_path))
-    visto = {}
+def test_create_task_writes_xml_in_admin_only_dir(monkeypatch, tmp_path):
+    """Verify _create_startup_task passes schtasks an XML located in the
+    admin-only folder, with the exe inside, and deletes it afterwards."""
+    monkeypatch.setattr(winsetup, "_admin_only_dir", lambda: str(tmp_path))
+    seen = {}
 
     def fake_run(cmd, quiet=False):
-        # /XML <ruta>: leer el XML tal como lo verá schtasks
-        ruta = cmd[cmd.index("/XML") + 1]
-        visto["ruta"] = ruta
-        with open(ruta, encoding="utf-16") as f:
-            visto["contenido"] = f.read()
+        # /XML <path>: read the XML exactly as schtasks will see it
+        path = cmd[cmd.index("/XML") + 1]
+        seen["path"] = path
+        with open(path, encoding="utf-16") as f:
+            seen["content"] = f.read()
 
         class _R:
             returncode = 0
@@ -52,21 +52,21 @@ def test_crear_tarea_escribe_el_xml_en_dir_solo_admin(monkeypatch, tmp_path):
         return _R()
 
     monkeypatch.setattr(winsetup.netops, "run", fake_run)
-    ok = winsetup._crear_tarea_inicio(r"C:\Program Files\NetQuick\NetQuick.exe")
+    ok = winsetup._create_startup_task(r"C:\Program Files\NetQuick\NetQuick.exe")
     assert ok
-    assert os.path.dirname(visto["ruta"]) == str(tmp_path)
-    assert "NetQuick.exe" in visto["contenido"]
-    assert not os.path.exists(visto["ruta"])       # se borró tras crear la tarea
+    assert os.path.dirname(seen["path"]) == str(tmp_path)
+    assert "NetQuick.exe" in seen["content"]
+    assert not os.path.exists(seen["path"])       # deleted after creating the task
 
 
-def test_crear_tarea_sin_dir_seguro_no_usa_ruta_insegura(monkeypatch):
-    """Si no se puede escribir en la carpeta protegida, NO se crea la tarea en
-    un sitio inseguro: devuelve False y ni siquiera llama a schtasks."""
-    monkeypatch.setattr(winsetup, "_dir_solo_admin",
-                        lambda: r"Z:\no-existe\ni-escribible")
+def test_create_task_without_safe_dir_does_not_use_insecure_path(monkeypatch):
+    """If the protected folder can't be written to, the task is NOT created in
+    an insecure spot: returns False and doesn't even call schtasks."""
+    monkeypatch.setattr(winsetup, "_admin_only_dir",
+                        lambda: r"Z:\does-not-exist\nor-writable")
 
-    def _no_debe_llamarse(cmd, quiet=False):
-        raise AssertionError("no debe invocar schtasks sin XML seguro")
+    def _must_not_be_called(cmd, quiet=False):
+        raise AssertionError("must not invoke schtasks without a safe XML")
 
-    monkeypatch.setattr(winsetup.netops, "run", _no_debe_llamarse)
-    assert winsetup._crear_tarea_inicio("x.exe") is False
+    monkeypatch.setattr(winsetup.netops, "run", _must_not_be_called)
+    assert winsetup._create_startup_task("x.exe") is False

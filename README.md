@@ -3,94 +3,92 @@
 <img src="https://img.shields.io/badge/Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white" alt="Windows"/>
 <img src="https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python"/>
 <img src="https://img.shields.io/badge/Version-1.3.0--beta-orange?style=for-the-badge" alt="Version"/>
-<img src="https://img.shields.io/badge/Estado-Beta%20%2F%20Demo%20en%20desarrollo-red?style=for-the-badge" alt="Estado"/>
+<img src="https://img.shields.io/badge/Status-Beta%20%2F%20Demo%20in%20development-red?style=for-the-badge" alt="Status"/>
 <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License"/>
 
 <br/><br/>
 
 # ⚡ NetQuick
 
-### *Cambia rápido, sin estresarte.*
+### *Switch fast, stress-free.*
 
-**NetQuick** es un widget flotante para Windows que vive en la bandeja del sistema y te deja cambiar la IP/red de tu máquina en segundos — sin abrir menús de Windows, sin memorizar comandos.
+**NetQuick** is a floating widget for Windows that lives in the system tray and lets you change your machine's IP/network in seconds — without opening Windows menus, without memorizing commands.
 
-> ⚠️ **Versión beta / demo en desarrollo activo.** Funciona y se usa a diario, pero puede cambiar sin aviso y contener errores.
+> ⚠️ **Beta / demo in active development.** It works and is used daily, but it may change without notice and contain bugs.
 
 </div>
 
 ---
 
-## 🚀 Cómo ejecutar NetQuick
+## 🚀 How to run NetQuick
 
-**La app es una sola: el widget flotante con icono en la bandeja del sistema.**
+**There is a single app: the floating widget with a system-tray icon.**
 
-| Situación | Comando |
+| Situation | Command |
 |---|---|
-| Instalar el `.exe` (recomendado) | `irm https://raw.githubusercontent.com/devmaiter/NetQuick/main/install.ps1 \| iex` |
-| Instalar desde fuente (sin .exe) | `irm https://raw.githubusercontent.com/devmaiter/NetQuick/main/install-src.ps1 \| iex` |
-| Repo ya clonado (desarrollo) | `.\setup.ps1` y luego doble clic en `NetQuick.vbs` |
-| Directo con Python | `pythonw netquick.py` |
-| **Desinstalar** | `irm https://raw.githubusercontent.com/devmaiter/NetQuick/main/uninstall.ps1 \| iex` |
+| Install the `.exe` (recommended) | `irm https://raw.githubusercontent.com/devmaiter/NetQuick/main/install.ps1 \| iex` |
+| Install from source (no .exe) | `irm https://raw.githubusercontent.com/devmaiter/NetQuick/main/install-src.ps1 \| iex` |
+| Repo already cloned (development) | `.\setup.ps1`, then double-click `NetQuick.vbs` |
+| Directly with Python | `pythonw netquick.py` |
+| **Uninstall** | `irm https://raw.githubusercontent.com/devmaiter/NetQuick/main/uninstall.ps1 \| iex` |
 
-Tras instalar, abre una terminal nueva y escribe **`netquick`**, o usa el acceso directo del Escritorio.
+After installing, open a new terminal and type **`netquick`**, or use the Desktop shortcut.
 
-> 🛡️ NetQuick necesita permisos de **Administrador** para cambiar la configuración de red; los pide solo cuando hace falta.
+> 🛡️ NetQuick needs **Administrator** permissions to change the network configuration; it only asks when needed.
 
 ---
 
-## 🗂️ Estructura del repo
+## 🗂️ Repo structure
 
-| Archivo | Qué es |
+| File | What it is |
 |---|---|
-| `netquick.py` | **La aplicación** — widget flotante + icono de bandeja |
-| `netops.py` | Operaciones de red (netsh, psutil, escáner, mDNS Dante, revert de emergencia) |
-| `store.py` | Persistencia de perfiles y configuración (JSON con escritura durable) |
-| `winsetup.py` | Integración con Windows (inicio automático, DPI, instancia única) |
-| `NetQuick.vbs` | Lanzador sin ventana de consola (doble clic) |
-| `NetQuick.spec` | Empaquetado del `.exe` con PyInstaller |
-| `install.ps1` / `install-src.ps1` | Instaladores por terminal (`irm ... \| iex`) |
-| `uninstall.ps1` | Desinstalador (revierte archivos, PATH, accesos e inicio con Windows) |
-| `setup.ps1` | Setup de desarrollo (instala dependencias) |
-| `tests/` | Tests de `netops`, `store`, `winsetup` y la UI con fakes (pytest, corren en CI) |
-| `docs/` | Backlog de confiabilidad y notas de ingeniería |
-| `experimentos/` | Scripts para validar hipótesis en una LAN real |
-| `CHANGELOG.md` | Historial de cambios |
+| `netquick.py` | **The application** — floating widget + tray icon |
+| `netops.py` | Network operations (netsh, psutil, scanner, Dante mDNS, emergency revert) |
+| `store.py` | Profile and configuration persistence (JSON with durable writes) |
+| `winsetup.py` | Windows integration (auto-start, DPI, single instance) |
+| `NetQuick.vbs` | Launcher without a console window (double-click) |
+| `NetQuick.spec` | `.exe` packaging with PyInstaller |
+| `install.ps1` / `install-src.ps1` | Terminal installers (`irm ... \| iex`) |
+| `uninstall.ps1` | Uninstaller (reverts files, PATH, shortcuts and start-with-Windows) |
+| `setup.ps1` | Development setup (installs dependencies) |
+| `tests/` | Tests of `netops`, `store`, `winsetup` and the UI with fakes (pytest, run in CI) |
+| `CHANGELOG.md` | Change history |
 
 ---
 
-## 🚀 Características
+## 🚀 Features
 
-| Función | Descripción |
+| Feature | Description |
 |---|---|
-| 📌 **Widget flotante** | Barrita compacta, siempre encima, anclada abajo a la derecha |
-| 🔔 **Icono en bandeja** | La ✕ oculta el widget; clic en el icono lo muestra; "Salir" en clic derecho |
-| 🏷️ **Perfiles guardados** | Guarda combinaciones IP/máscara/gateway (*Casa*, *U*, *Trabajo*) y aplícalas de 1 clic |
-| 🔄 **DHCP / IP fija** | Cambia de modo con un clic; el color indica el modo activo |
-| 🔍 **Escáner de red** | Compatible con redes Dante (máscara real y link-local /16), descubrimiento mDNS nativo |
-| 🚫 **Anti-IP duplicada** | Antes de aplicar comprueba que la IP esté libre: ping + sonda ARP dirigida (detecta equipos que callan al ping); si no puede verificar, lo dice |
-| ⏪ **Auto-revert** | Si la IP aplicada te deja sin salida (el gateway no responde), cuenta regresiva de 30 s y vuelta automática a la config anterior — el revert es 100 % local |
-| 🚦 **Estados honestos** | Verde = éxito limpio · ámbar = aplicado con avisos · rojo = no se aplicó; nunca verde ocultando un problema |
-| 📋 **Log estructurado** | Cada intento queda en `%LOCALAPPDATA%\NetQuick\netquick.log` con operación, resultado y duración |
-| ⚙️ **Iniciar con Windows** | Opción en la rueda ⚙ del widget |
-| 🛡️ **Permisos de Admin** | Solicitud automática cuando hace falta |
+| 📌 **Floating widget** | Compact little bar, always on top, anchored bottom-right |
+| 🔔 **Tray icon** | The ✕ hides the widget; clicking the icon shows it; "Quit" on right-click |
+| 🏷️ **Saved profiles** | Save IP/mask/gateway combinations (*Home*, *Uni*, *Work*) and apply them in 1 click |
+| 🔄 **DHCP / static IP** | Switch mode with one click; the color shows the active mode |
+| 🔍 **Network scanner** | Compatible with Dante networks (real mask and link-local /16), native mDNS discovery |
+| 🚫 **Duplicate-IP guard** | Before applying, checks the IP is free: ping + directed ARP probe (detects hosts silent to ping); if it can't verify, it says so |
+| ⏪ **Auto-revert** | If the applied IP leaves you with no way out (the gateway doesn't respond), a 30 s countdown and automatic return to the previous config — the revert is 100% local |
+| 🚦 **Honest states** | Green = clean success · amber = applied with warnings · red = not applied; never green hiding a problem |
+| 📋 **Structured log** | Every attempt is recorded in `%LOCALAPPDATA%\NetQuick\netquick.log` with operation, result and duration |
+| ⚙️ **Start with Windows** | Option in the widget's ⚙ gear |
+| 🛡️ **Admin permissions** | Requested automatically when needed |
 
 ---
 
-## 📦 Generar el .exe
+## 📦 Build the .exe
 
 ```powershell
 pip install pyinstaller
 pyinstaller NetQuick.spec
-# resultado: dist\NetQuick.exe
+# result: dist\NetQuick.exe
 ```
 
-> **Nota:** Windows (Defender / Smart App Control) puede bloquear el `.exe` por no estar firmado. Ejecutar desde fuente (`pythonw netquick.py`) no tiene ese problema.
+> **Note:** Windows (Defender / Smart App Control) may block the `.exe` because it is unsigned. Running from source (`pythonw netquick.py`) does not have that problem.
 
-Los `.exe` oficiales se compilan automáticamente en GitHub Actions al crear un tag `v*`, y cada release publica el **hash SHA256** del ejecutable para que puedas verificar tu descarga: `Get-FileHash NetQuick.exe -Algorithm SHA256`.
+The official `.exe` builds are compiled automatically in GitHub Actions when a `v*` tag is created, and each release publishes the executable's **SHA256 hash** so you can verify your download: `Get-FileHash NetQuick.exe -Algorithm SHA256`.
 
 ---
 
-## 👥 Autores
+## 👥 Authors
 
 <table>
   <tr>
@@ -101,16 +99,16 @@ Los `.exe` oficiales se compilan automáticamente en GitHub Actions al crear un 
 
 ---
 
-## 📄 Licencia
+## 📄 License
 
-Este proyecto está bajo la Licencia MIT. Consulta el archivo [LICENSE](LICENSE) para más detalles.
+This project is under the MIT License. See the [LICENSE](LICENSE) file for details.
 
 ---
 
 <div align="center">
 
-*Hecho con ❤️ en Colombia 🇨🇴*
+*Made with ❤️ in Colombia 🇨🇴*
 
-**¿Te fue útil? ¡Dale una ⭐ al repo!**
+**Was it useful? Give the repo a ⭐!**
 
 </div>

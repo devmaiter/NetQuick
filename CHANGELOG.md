@@ -1,68 +1,66 @@
 # Changelog
 
-Historial de cambios de NetQuick. La versión del código vive en
-`netquick.py` (`__version__`) y es la única fuente de verdad.
+NetQuick change history. The code version lives in `netquick.py`
+(`__version__`) and is the single source of truth.
 
-## [1.3.0-beta] — sin publicar
+## [1.3.0-beta] — unreleased
 
-- Seguridad (FM-5): NetQuick ya no se auto-registra para iniciar con Windows en
-  el primer arranque — se queda en la bandeja al abrirse y el inicio automático
-  es opción del usuario en ⚙ (apagada por defecto). Cuando se activa, el
-  `task.xml` se genera en `%SystemRoot%\Temp` (solo admin), no en `%APPDATA%`,
-  cerrando la ventana TOCTOU de elevación de privilegios local. Se elimina la
-  clave `Run` insegura de versiones previas sin recrear la tarea.
-- Auto-revert (issue #21): tras aplicar IP fija se verifica el gateway; si no
-  responde, cuenta regresiva de 30 s con botón "Mantener cambio" y vuelta
-  automática a la configuración anterior. El revert va por netsh directo,
-  sin depender de la red (lección Meta 2021).
-- Detección de IP en uso reforzada (issue #20 / FM-2): sonda ARP dirigida para
-  equipos que callan al ping; fuera de la subred local ya no se finge certeza —
-  se aplica con el aviso "no se pudo verificar que la IP estuviera libre".
-- Honestidad transaccional (issue #22): si el DNS falla tras aplicar la IP, el
-  resultado es fallo (rojo), no éxito con letra pequeña; tercer estado ámbar
-  para "aplicado con avisos".
-- Escritura durable de perfiles/config y log estructurado por intento
-  (op/resultado/motivo/duración) en `%LOCALAPPDATA%\NetQuick\netquick.log`.
-- Refactor testeable: UI instanciable con operaciones y persistencia
-  inyectables (`store.py`, `winsetup.py`); 90 tests con fakes, ruff y
-  cobertura mínima en CI.
-- Docs: backlog de confiabilidad (`docs/backlog-confiabilidad.md`) y
-  experimento de validación FM-2 (`experimentos/exp_ip_en_uso.py`).
+- Security (FM-5): NetQuick no longer auto-registers to start with Windows on
+  first run — it opens, stays in the tray, and start-with-Windows is a user
+  option in ⚙ (off by default). When enabled, the `task.xml` is generated in
+  `%SystemRoot%\Temp` (admin only), not in `%APPDATA%`, closing the local
+  privilege-escalation TOCTOU window. The insecure `Run` key from previous
+  versions is removed without recreating the task.
+- Auto-revert (issue #21): after applying a static IP the gateway is verified;
+  if it doesn't respond, a 30 s countdown with a "Keep change" button and an
+  automatic return to the previous configuration. The revert goes through
+  direct netsh, with no dependency on the network (Meta 2021 lesson).
+- Stronger in-use IP detection (issue #20 / FM-2): a directed ARP probe for
+  hosts silent to ping; outside the local subnet certainty is no longer faked
+  — it applies with the warning "could not verify that the IP was free".
+- Transactional honesty (issue #22): if DNS fails after applying the IP, the
+  result is a failure (red), not a success with fine print; a third amber
+  state for "applied with warnings".
+- Durable profile/config writes and a structured per-attempt log
+  (op/result/reason/duration) in `%LOCALAPPDATA%\NetQuick\netquick.log`.
+- Testable refactor: instantiable UI with injectable operations and
+  persistence (`store.py`, `winsetup.py`); 93 tests with fakes, ruff and a
+  minimum coverage gate in CI.
 
 ## [1.2.2-beta] — 2026-07-18
 
-- Campo DNS al aplicar IP estática — adiós al "tengo IP pero no internet".
-- Validación real de la máscara de subred y aviso de gateway fuera de subred.
-- Se recuerda la última interfaz elegida (fuera el `NETLAB-` fijo en el código).
-- Log de diagnóstico en `%LOCALAPPDATA%\NetQuick` y errores de netsh con causa real.
-- Una interfaz con error ya no tumba la lista completa de adaptadores.
-- Conciencia de DPI: el widget se ve nítido con escalado de Windows (125/150 %).
-- Al relanzar como administrador (modo fuente) ya no se pierden los valores tecleados.
-- Versión visible en el widget y el tooltip de la bandeja; `__version__` en el código.
-- Tests de `netops` con pytest + CI en GitHub Actions.
-- Release automatizado: al crear un tag `v*` se compila el `.exe` y se publica con su hash SHA256.
-- Desinstalador `uninstall.ps1` (revierte archivos, PATH, accesos, inicio con Windows y firewall).
-- Lanzadores con ruta absoluta de `pythonw.exe` (ya no dependen del PATH).
+- DNS field when applying a static IP — goodbye to "I have an IP but no internet".
+- Real subnet-mask validation and a warning for a gateway outside the subnet.
+- The last chosen interface is remembered (out with the hardcoded `NETLAB-`).
+- Diagnostic log in `%LOCALAPPDATA%\NetQuick` and netsh errors with the real cause.
+- An interface with an error no longer takes down the whole adapter list.
+- DPI awareness: the widget looks crisp with Windows scaling (125/150%).
+- Relaunching as administrator (source mode) no longer loses the typed values.
+- Version visible in the widget and the tray tooltip; `__version__` in the code.
+- `netops` tests with pytest + CI on GitHub Actions.
+- Automated release: creating a `v*` tag builds the `.exe` and publishes it with its SHA256 hash.
+- `uninstall.ps1` uninstaller (reverts files, PATH, shortcuts, start-with-Windows and firewall).
+- Launchers with the absolute path to `pythonw.exe` (no longer depend on the PATH).
 
 ## [1.2.1-beta] — 2026-07
 
-- Refactor: una sola app clara (`netquick.py`); se eliminan `main.py` y `mini.py`.
-- Estado de red sin depender del idioma/codificación de Windows (registro + psutil, sin parsear netsh).
-- Elevación compatible con el `.exe` empaquetado (`uac_admin` en el manifest).
-- La ventana ya nunca se cierra al aplicar cambios.
-- UX: el color indica el modo activo (DHCP vs IP fija); el botón del modo activo queda en verde ✔.
+- Refactor: a single clear app (`netquick.py`); `main.py` and `mini.py` removed.
+- Network state independent of Windows language/encoding (registry + psutil, no netsh parsing).
+- Elevation compatible with the packaged `.exe` (`uac_admin` in the manifest).
+- The window never closes on applying changes anymore.
+- UX: the color shows the active mode (DHCP vs static IP); the active mode's button turns green ✔.
 
 ## [1.2.0] — 2026-07
 
-- Icono en la bandeja del sistema (la ✕ oculta; "Salir" en clic derecho).
-- Escáner de red compatible con Dante: máscara real, link-local /16 y descubrimiento mDNS nativo.
-- Detección de conflicto de IP antes de aplicar.
-- Empaquetado `.exe` con PyInstaller.
+- System-tray icon (the ✕ hides; "Quit" on right-click).
+- Dante-compatible network scanner: real mask, link-local /16 and native mDNS discovery.
+- IP conflict detection before applying.
+- `.exe` packaging with PyInstaller.
 
 ## [1.1.0] — 2026-07
 
-- Mini-widget flotante, perfiles guardados y validación de IP.
+- Floating mini-widget, saved profiles and IP validation.
 
 ## [1.0.0] — 2026-07
 
-- Primera versión: cambio de IP/DHCP por interfaz desde una ventana simple.
+- First version: change IP/DHCP per interface from a simple window.

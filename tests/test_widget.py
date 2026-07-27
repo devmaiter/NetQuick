@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tests de MiniWidget con un doble de netops (sin red, admin ni netsh).
+"""Tests of MiniWidget with a netops double (no network, admin or netsh).
 
-La UI recibe las operaciones por parámetro (ops), así que aquí se le pasa
-un FakeOps que responde en memoria: se prueba la lógica de la ventana sin
-tocar el sistema. Si el entorno no puede abrir ventanas Tk (CI sin
-escritorio), los tests se saltan.
+The UI receives its operations as a parameter (ops), so here it's given a
+FakeOps that answers in memory: the window logic is tested without touching
+the system. If the environment can't open Tk windows (headless CI), the
+tests are skipped.
 """
 import os
 import sys
@@ -18,51 +18,51 @@ import netquick
 
 
 class FakeOps:
-    """Mismo contrato que netops, con respuestas fijas y registro de llamadas."""
+    """Same contract as netops, with fixed answers and call recording."""
 
-    def __init__(self, dhcp=False, interfaces=None, gw_responde=True):
+    def __init__(self, dhcp=False, interfaces=None, gw_responds=True):
         self.dhcp = dhcp
         self.interfaces = interfaces if interfaces is not None else \
-            [{"nombre": "Ethernet", "ip": "10.0.0.5"}]
-        self.gw_responde = gw_responde
-        self.static_llamado = None
-        self.dhcp_llamado = None
-        self.revert_llamado = None
+            [{"name": "Ethernet", "ip": "10.0.0.5"}]
+        self.gw_responds = gw_responds
+        self.static_called = None
+        self.dhcp_called = None
+        self.revert_called = None
 
     def list_interfaces(self):
         return self.interfaces
 
-    def get_config(self, nombre):
+    def get_config(self, name):
         return {"dhcp": self.dhcp, "ip": "10.0.0.5",
                 "mask": "255.255.255.0", "gw": "10.0.0.1", "dns": "8.8.8.8"}
 
-    def get_ip(self, nombre):
+    def get_ip(self, name):
         return "10.0.0.5"
 
     def is_admin(self):
         return True
 
-    def set_static(self, nombre, ip, mask, gw=None, dns=None):
-        self.static_llamado = (nombre, ip, mask, gw, dns)
-        return True, "IP aplicada"
+    def set_static(self, name, ip, mask, gw=None, dns=None):
+        self.static_called = (name, ip, mask, gw, dns)
+        return True, "IP applied"
 
-    def set_dhcp(self, nombre):
-        self.dhcp_llamado = nombre
-        return True, "DHCP activado"
+    def set_dhcp(self, name):
+        self.dhcp_called = name
+        return True, "DHCP enabled"
 
-    def fabricante_mac(self, mac):
+    def mac_vendor(self, mac):
         return ""
 
-    def gateway_responde(self, gw):
-        return self.gw_responde
+    def gateway_responds(self, gw):
+        return self.gw_responds
 
-    def revertir_a(self, nombre, previa):
-        self.revert_llamado = (nombre, previa)
-        return True, f"Revertido a {previa.get('ip', '')}"
+    def revert_to(self, name, previous):
+        self.revert_called = (name, previous)
+        return True, f"Reverted to {previous.get('ip', '')}"
 
 
 class FakeStore:
-    """Persistencia en memoria: los tests no leen ni escriben JSON reales."""
+    """In-memory persistence: the tests don't read or write real JSON."""
 
     def __init__(self, profiles=None, config=None):
         self.profiles = profiles or {}
@@ -81,42 +81,42 @@ class FakeStore:
         self.config = dict(data)
 
 
-def _crear(monkeypatch, **kwargs):
-    # Sin icono de bandeja en tests: evita hilos de pystray sueltos
-    monkeypatch.setattr(netquick, "TRAY_DISPONIBLE", False)
+def _create(monkeypatch, **kwargs):
+    # No tray icon in tests: avoids stray pystray threads
+    monkeypatch.setattr(netquick, "TRAY_AVAILABLE", False)
     fake = FakeOps(**kwargs)
-    # Crear intérpretes Tk seguidos en un mismo proceso a veces falla con
-    # "invalid command name tcl_findLibrary" (carrera al inicializar Tcl):
-    # se reintenta antes de dar el entorno por incapaz de abrir ventanas.
+    # Creating several Tk interpreters in a row in one process sometimes fails
+    # with "invalid command name tcl_findLibrary" (a race initializing Tcl):
+    # retry before declaring the environment unable to open windows.
     error = None
     for _ in range(3):
         try:
             return netquick.MiniWidget(ops=fake, store_mod=FakeStore()), fake
         except tk.TclError as e:
             error = e
-    pytest.skip(f"Tkinter no puede abrir ventanas en este entorno: {error}")
+    pytest.skip(f"Tkinter can't open windows in this environment: {error}")
 
 
 @pytest.fixture
 def widget(monkeypatch):
-    w, fake = _crear(monkeypatch)
+    w, fake = _create(monkeypatch)
     yield w, fake
     w.root.destroy()
 
 
-def test_instanciar_no_bloquea(widget):
+def test_instantiating_does_not_block(widget):
     w, _ = widget
     assert w.root.winfo_exists()
 
 
-def test_refrescar_puebla_combo(widget):
+def test_refresh_populates_combo(widget):
     w, _ = widget
     assert w._map == {"Ethernet": "10.0.0.5"}
     assert w.iface.get() == "Ethernet — 10.0.0.5"
     assert w._iface_name() == "Ethernet"
 
 
-def test_campos_reflejan_config(widget):
+def test_fields_reflect_config(widget):
     w, _ = widget
     assert w._val(w.ip) == "10.0.0.5"
     assert w._val(w.mask) == "255.255.255.0"
@@ -124,37 +124,38 @@ def test_campos_reflejan_config(widget):
     assert w._val(w.dns) == "8.8.8.8"
 
 
-def test_aplicar_ip_llama_set_static(widget):
+def test_apply_ip_calls_set_static(widget):
     w, fake = widget
     w._put(w.ip, "192.168.1.50")
     w._put(w.mask, "255.255.255.0")
     w._put(w.gw, "192.168.1.1")
     w._put(w.dns, "8.8.8.8")
-    w.aplicar_ip()
-    assert fake.static_llamado == ("Ethernet", "192.168.1.50",
-                                   "255.255.255.0", "192.168.1.1", "8.8.8.8")
+    w.apply_ip()
+    assert fake.static_called == ("Ethernet", "192.168.1.50",
+                                  "255.255.255.0", "192.168.1.1", "8.8.8.8")
 
 
-def test_aplicar_dhcp_llama_set_dhcp(widget):
+def test_apply_dhcp_calls_set_dhcp(widget):
     w, fake = widget
-    w.aplicar_dhcp()
-    assert fake.dhcp_llamado == "Ethernet"
+    w.apply_dhcp()
+    assert fake.dhcp_called == "Ethernet"
 
 
-def test_sin_interfaces_no_toca_la_red(monkeypatch):
-    w, fake = _crear(monkeypatch, interfaces=[])
+def test_no_interfaces_does_not_touch_network(monkeypatch):
+    w, fake = _create(monkeypatch, interfaces=[])
     try:
-        w.aplicar_ip()
-        w.aplicar_dhcp()
-        assert fake.static_llamado is None
-        assert fake.dhcp_llamado is None
-        assert "Sin interfaces" in w.status["text"] or "interfaz" in w.status["text"]
+        w.apply_ip()
+        w.apply_dhcp()
+        assert fake.static_called is None
+        assert fake.dhcp_called is None
+        assert ("No active interfaces" in w.status["text"]
+                or "interface" in w.status["text"])
     finally:
         w.root.destroy()
 
 
-def test_boton_dhcp_desactivado_en_modo_dhcp(monkeypatch):
-    w, _ = _crear(monkeypatch, dhcp=True)
+def test_dhcp_button_disabled_in_dhcp_mode(monkeypatch):
+    w, _ = _create(monkeypatch, dhcp=True)
     try:
         assert str(w.btn_dhcp["state"]) == "disabled"
         assert "✔" in w.btn_dhcp["text"]
@@ -162,94 +163,94 @@ def test_boton_dhcp_desactivado_en_modo_dhcp(monkeypatch):
         w.root.destroy()
 
 
-def test_boton_aplicar_marca_ip_fija_sin_cambios(monkeypatch):
-    # Con IP fija aplicada y sin ediciones pendientes, el botón queda
-    # desactivado mostrando el estado (lógica de _update_mode_buttons)
-    w, _ = _crear(monkeypatch, dhcp=False)
+def test_apply_button_marks_static_ip_without_changes(monkeypatch):
+    # With a static IP applied and no pending edits, the button stays disabled
+    # showing the state (_update_mode_buttons logic)
+    w, _ = _create(monkeypatch, dhcp=False)
     try:
-        assert str(w.btn_aplicar["state"]) == "disabled"
-        assert "✔" in w.btn_aplicar["text"]
+        assert str(w.btn_apply["state"]) == "disabled"
+        assert "✔" in w.btn_apply["text"]
     finally:
         w.root.destroy()
 
 
-def test_editar_campo_enciende_aplicar(widget):
+def test_editing_field_lights_up_apply(widget):
     w, _ = widget
     w._put(w.ip, "192.168.99.99")
     w._update_mode_buttons()
-    assert str(w.btn_aplicar["state"]) == "normal"
-    assert w.btn_aplicar["text"] == "Aplicar IP"
+    assert str(w.btn_apply["state"]) == "normal"
+    assert w.btn_apply["text"] == "Apply IP"
 
 
-# --- #21: aplicar → sin confirmación → auto-revert ----------------------------
-def _aplicar_ip_mala(w):
-    """Aplica una IP fija cuyo gateway no va a responder."""
+# --- #21: apply → no confirmation → auto-revert ------------------------------
+def _apply_bad_ip(w):
+    """Apply a static IP whose gateway won't respond."""
     w._put(w.ip, "192.168.99.50")
     w._put(w.mask, "255.255.255.0")
     w._put(w.gw, "192.168.99.1")
     w._put(w.dns, "")
-    w.aplicar_ip()
+    w.apply_ip()
 
 
-def test_config_sin_salida_arma_cuenta_regresiva(monkeypatch):
-    w, _ = _crear(monkeypatch, gw_responde=False)
+def test_config_without_way_out_arms_countdown(monkeypatch):
+    w, _ = _create(monkeypatch, gw_responds=False)
     try:
-        _aplicar_ip_mala(w)
-        assert w._revert_previa is not None
-        assert w.revert_frame.winfo_manager()          # la barra está visible
-        assert "Mantener" in w.btn_mantener["text"]
+        _apply_bad_ip(w)
+        assert w._revert_previous is not None
+        assert w.revert_frame.winfo_manager()          # the bar is visible
+        assert "Keep" in w.btn_keep["text"]
     finally:
         w.root.destroy()
 
 
-def test_sin_confirmacion_revierte_a_la_config_previa(monkeypatch):
-    """El criterio de aceptación del issue: aplicar a propósito una config
-    sin salida y dejar vencer el temporizador revierte sola."""
-    w, fake = _crear(monkeypatch, gw_responde=False)
+def test_no_confirmation_reverts_to_previous_config(monkeypatch):
+    """The issue's acceptance criterion: apply a config without a way out on
+    purpose and let the timer expire — it reverts on its own."""
+    w, fake = _create(monkeypatch, gw_responds=False)
     try:
-        _aplicar_ip_mala(w)
-        w._revert_restante = 0                          # vence el temporizador
+        _apply_bad_ip(w)
+        w._revert_remaining = 0                          # the timer expires
         w._revert_tick()
-        nombre, previa = fake.revert_llamado
-        assert nombre == "Ethernet"
-        assert previa["ip"] == "10.0.0.5"               # la config de antes
-        assert w._revert_previa is None
-        assert not w.revert_frame.winfo_manager()       # la barra se ocultó
-        assert "restaurada" in w.status["text"]
+        name, previous = fake.revert_called
+        assert name == "Ethernet"
+        assert previous["ip"] == "10.0.0.5"              # the previous config
+        assert w._revert_previous is None
+        assert not w.revert_frame.winfo_manager()        # the bar hid itself
+        assert "restored" in w.status["text"]
     finally:
         w.root.destroy()
 
 
-def test_confirmar_mantiene_el_cambio(monkeypatch):
-    w, fake = _crear(monkeypatch, gw_responde=False)
+def test_confirming_keeps_the_change(monkeypatch):
+    w, fake = _create(monkeypatch, gw_responds=False)
     try:
-        _aplicar_ip_mala(w)
-        w._confirmar_cambio()
-        assert fake.revert_llamado is None
-        assert w._revert_previa is None
-        assert "confirmado" in w.status["text"]
+        _apply_bad_ip(w)
+        w._confirm_change()
+        assert fake.revert_called is None
+        assert w._revert_previous is None
+        assert "confirmed" in w.status["text"]
     finally:
         w.root.destroy()
 
 
-def test_gateway_que_responde_no_pregunta(monkeypatch):
-    w, _ = _crear(monkeypatch, gw_responde=True)
+def test_responding_gateway_does_not_ask(monkeypatch):
+    w, _ = _create(monkeypatch, gw_responds=True)
     try:
-        _aplicar_ip_mala(w)
-        assert w._revert_previa is None
+        _apply_bad_ip(w)
+        assert w._revert_previous is None
         assert not w.revert_frame.winfo_manager()
     finally:
         w.root.destroy()
 
 
-def test_aplicar_dhcp_cancela_la_cuenta_regresiva(monkeypatch):
-    """El botón DHCP es el rescate manual: usarlo anula el auto-revert."""
-    w, fake = _crear(monkeypatch, gw_responde=False)
+def test_apply_dhcp_cancels_the_countdown(monkeypatch):
+    """The DHCP button is the manual rescue: using it cancels the auto-revert."""
+    w, fake = _create(monkeypatch, gw_responds=False)
     try:
-        _aplicar_ip_mala(w)
-        assert w._revert_previa is not None
-        w.aplicar_dhcp()
-        assert w._revert_previa is None
-        assert fake.revert_llamado is None
+        _apply_bad_ip(w)
+        assert w._revert_previous is not None
+        w.apply_dhcp()
+        assert w._revert_previous is None
+        assert fake.revert_called is None
     finally:
         w.root.destroy()

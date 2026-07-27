@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-NetQuick Mini — widget flotante, siempre encima, para cambiar red/IP al vuelo.
+NetQuick Mini — floating widget, always on top, to change network/IP on the fly.
 
-- Campos con etiqueta clara (IP / Máscara / Gateway).
-- Rueda ⚙ con configuración: iniciar con Windows + perfiles guardados.
-- Perfiles: guarda combinaciones (ej. Casa / U / Trabajo) y aplícalas de 1 clic.
-- Sin ventana negra: lánzalo con NetQuick.vbs (usa pythonw.exe).
-- Icono en la bandeja del sistema: la ✕ oculta el widget; clic en el icono
-  lo muestra de nuevo. "Salir" está en el menú del icono (clic derecho).
+- Fields with clear labels (IP / Mask / Gateway).
+- ⚙ gear with settings: start with Windows + saved profiles.
+- Profiles: save combinations (e.g. Home / Uni / Work) and apply them in 1 click.
+- No black window: launch it with NetQuick.vbs (uses pythonw.exe).
+- System tray icon: the ✕ hides the widget; clicking the icon shows it
+  again. "Quit" is in the icon's menu (right-click).
 """
 import argparse
 import threading
@@ -24,26 +24,26 @@ __version__ = "1.3.0-beta"
 try:
     import pystray
     from PIL import Image, ImageDraw
-    TRAY_DISPONIBLE = True
+    TRAY_AVAILABLE = True
 except ImportError:
-    TRAY_DISPONIBLE = False
+    TRAY_AVAILABLE = False
 
-# Paleta — estilo Dante: blanco, verde y rojo
-ACCENT = "#43A047"        # verde (acción principal, borde)
-ACCENT_DARK = "#2E7D32"   # verde oscuro (hover)
-BG = "#FFFFFF"            # fondo blanco
-CARD = "#F3F4F6"          # gris claro (campos, botones secundarios)
+# Palette — Dante style: white, green and red
+ACCENT = "#43A047"        # green (primary action, border)
+ACCENT_DARK = "#2E7D32"   # dark green (hover)
+BG = "#FFFFFF"            # white background
+CARD = "#F3F4F6"          # light gray (fields, secondary buttons)
 CARD_HOVER = "#E5E7EB"
-TEXT = "#1F2937"          # texto principal oscuro
-MUTED = "#6B7280"         # texto secundario
-OK = "#2E7D32"            # verde estado (éxito limpio)
-WARN = "#B45309"          # ámbar (aplicado, pero con avisos)
-ERR = "#E53935"           # rojo estado / errores (no se aplicó)
+TEXT = "#1F2937"          # dark primary text
+MUTED = "#6B7280"         # secondary text
+OK = "#2E7D32"            # green status (clean success)
+WARN = "#B45309"          # amber (applied, but with warnings)
+ERR = "#E53935"           # red status / errors (nothing applied)
 
 class MiniWidget:
     def __init__(self, ops=netops, store_mod=store):
-        # Las operaciones de red y la persistencia se inyectan: en la app son
-        # los módulos netops/store, en los tests dobles que no tocan nada.
+        # Network operations and persistence are injected: in the app they are
+        # the netops/store modules, in the tests doubles that touch nothing.
         self.ops = ops
         self.store = store_mod
         self.root = tk.Tk()
@@ -54,7 +54,7 @@ class MiniWidget:
         self.config = self.store.load_config()
         self._map = {}
         self._display = {}
-        self._revert_previa = None
+        self._revert_previous = None
         self._revert_after = None
 
         outer = tk.Frame(self.root, bg=ACCENT)
@@ -65,7 +65,7 @@ class MiniWidget:
         self._build_header()
         self._build_form()
         self._build_profiles()
-        self.status = tk.Label(self.card, text="Listo", bg=BG, fg=MUTED,
+        self.status = tk.Label(self.card, text="Ready", bg=BG, fg=MUTED,
                                font=("Segoe UI", 8, "bold"), anchor="w")
         self.status.pack(fill="x", padx=12, pady=(0, 2))
         self._build_revert_frame()
@@ -73,11 +73,11 @@ class MiniWidget:
                  bg=BG, fg="#B9BFC7", font=("Segoe UI", 7), anchor="e"
                  ).pack(fill="x", padx=12, pady=(0, 5))
 
-        self.refrescar(select_default=True)
-        self._repoblar_tras_relanzar()
+        self.refresh(select_default=True)
+        self._repopulate_after_relaunch()
         self._place_bottom_right()
         self.tray = None
-        if TRAY_DISPONIBLE:
+        if TRAY_AVAILABLE:
             self._init_tray()
 
     def run(self):
@@ -91,7 +91,7 @@ class MiniWidget:
         sh = self.root.winfo_screenheight()
         self.root.geometry(f"+{sw - w - 24}+{sh - h - 64}")
 
-    # --- Cabecera -----------------------------------------------------------
+    # --- Header -------------------------------------------------------------
     def _build_header(self):
         head = tk.Frame(self.card, bg=BG)
         head.pack(fill="x", padx=10, pady=(7, 2))
@@ -101,10 +101,10 @@ class MiniWidget:
                  font=("Segoe UI", 7, "italic")).pack(side="left",
                                                       padx=(4, 0), pady=(3, 0))
 
-        for txt, cmd, hover in (("✕", self.cerrar, ERR),
-                                ("⟳", lambda: self.refrescar(), TEXT),
-                                ("⚙", self.abrir_config, TEXT),
-                                ("🔍", self.abrir_scanner, TEXT)):
+        for txt, cmd, hover in (("✕", self.close, ERR),
+                                ("⟳", lambda: self.refresh(), TEXT),
+                                ("⚙", self.open_config, TEXT),
+                                ("🔍", self.open_scanner, TEXT)):
             tk.Button(head, text=txt, bg=BG, fg=MUTED, bd=0, activebackground=BG,
                       activeforeground=hover, font=("Segoe UI", 11),
                       cursor="hand2", command=cmd).pack(side="right", padx=3)
@@ -116,15 +116,15 @@ class MiniWidget:
         body = tk.Frame(self.card, bg=BG)
         body.pack(fill="x", padx=10)
 
-        tk.Label(body, text="Interfaz de red", bg=BG, fg=MUTED,
+        tk.Label(body, text="Network interface", bg=BG, fg=MUTED,
                  font=("Segoe UI", 8)).grid(row=0, column=0, columnspan=4, sticky="w")
         self.iface = ttk.Combobox(body, state="readonly", font=("Segoe UI", 9))
         self.iface.grid(row=1, column=0, columnspan=4, sticky="we", pady=(0, 6))
-        self.iface.bind("<<ComboboxSelected>>", lambda e: self._iface_elegida())
+        self.iface.bind("<<ComboboxSelected>>", lambda e: self._iface_chosen())
 
-        # Etiquetas claras encima de cada campo
-        for col, txt in ((0, "IP del equipo"), (1, "Máscara de subred"),
-                         (2, "Puerta de enlace"), (3, "DNS (ej. 8.8.8.8)")):
+        # Clear labels above each field
+        for col, txt in ((0, "Device IP"), (1, "Subnet mask"),
+                         (2, "Gateway"), (3, "DNS (e.g. 8.8.8.8)")):
             tk.Label(body, text=txt, bg=BG, fg=MUTED,
                      font=("Segoe UI", 8)).grid(row=2, column=col, sticky="w", padx=(0, 6))
 
@@ -141,19 +141,19 @@ class MiniWidget:
 
         btns = tk.Frame(self.card, bg=BG)
         btns.pack(fill="x", padx=10, pady=(8, 4))
-        self.btn_aplicar = tk.Button(btns, text="Aplicar IP", bg=ACCENT, fg="white", bd=0,
-                                     activebackground=ACCENT_DARK, activeforeground="white",
-                                     font=("Segoe UI", 9, "bold"), cursor="hand2",
-                                     command=self.aplicar_ip)
-        self.btn_aplicar.pack(side="left", ipadx=10, ipady=3)
+        self.btn_apply = tk.Button(btns, text="Apply IP", bg=ACCENT, fg="white", bd=0,
+                                   activebackground=ACCENT_DARK, activeforeground="white",
+                                   font=("Segoe UI", 9, "bold"), cursor="hand2",
+                                   command=self.apply_ip)
+        self.btn_apply.pack(side="left", ipadx=10, ipady=3)
         self.btn_dhcp = tk.Button(btns, text="Auto (DHCP)", bg=CARD, fg=TEXT, bd=0,
                                   activebackground=CARD_HOVER, activeforeground=TEXT,
                                   font=("Segoe UI", 9, "bold"), cursor="hand2",
-                                  command=self.aplicar_dhcp)
+                                  command=self.apply_dhcp)
         self.btn_dhcp.pack(side="left", padx=6, ipadx=8, ipady=3)
-        # Al editar IP/máscara/gateway, "Aplicar IP" se enciende (cambio pendiente)
-        for campo in (self.ip, self.mask, self.gw, self.dns):
-            campo.bind("<KeyRelease>", lambda e: self._update_mode_buttons())
+        # When editing IP/mask/gateway, "Apply IP" lights up (pending change)
+        for field in (self.ip, self.mask, self.gw, self.dns):
+            field.bind("<KeyRelease>", lambda e: self._update_mode_buttons())
 
     def _build_profiles(self):
         self.prof_frame = tk.Frame(self.card, bg=BG)
@@ -165,26 +165,26 @@ class MiniWidget:
             w.destroy()
         if not self.profiles:
             return
-        tk.Label(self.prof_frame, text="Perfiles:", bg=BG, fg=MUTED,
+        tk.Label(self.prof_frame, text="Profiles:", bg=BG, fg=MUTED,
                  font=("Segoe UI", 8)).pack(side="left", padx=(0, 6))
-        # El perfil cuya IP coincide con la actual se resalta en verde con ✔
-        ip_actual = self._map.get(self._iface_name(), "")
-        for nombre, p in self.profiles.items():
-            activo = bool(ip_actual) and p.get("ip") == ip_actual
+        # The profile whose IP matches the current one is highlighted green with ✔
+        current_ip = self._map.get(self._iface_name(), "")
+        for name, p in self.profiles.items():
+            active = bool(current_ip) and p.get("ip") == current_ip
             tk.Button(self.prof_frame,
-                      text=("✔ " + nombre) if activo else nombre,
-                      bg=ACCENT if activo else CARD,
-                      fg="white" if activo else TEXT, bd=0,
+                      text=("✔ " + name) if active else name,
+                      bg=ACCENT if active else CARD,
+                      fg="white" if active else TEXT, bd=0,
                       activebackground=ACCENT, activeforeground="white",
                       font=("Segoe UI", 8, "bold"), cursor="hand2",
-                      command=lambda n=nombre: self.aplicar_perfil(n)
+                      command=lambda n=name: self.apply_profile(n)
                       ).pack(side="left", padx=2, ipadx=5, ipady=1)
 
     def _entry(self, parent):
         return tk.Entry(parent, bg=CARD, fg=TEXT, bd=0, insertbackground=TEXT,
                         font=("Consolas", 9), justify="center")
 
-    # --- Helpers de campos --------------------------------------------------
+    # --- Field helpers ------------------------------------------------------
     def _val(self, e):
         return e.get().strip()
 
@@ -193,9 +193,9 @@ class MiniWidget:
         if value:
             e.insert(0, value)
 
-    # --- Bandeja del sistema -------------------------------------------------
+    # --- System tray --------------------------------------------------------
     def _tray_image(self):
-        """Dibuja el icono: cuadrito azul con un rayo blanco."""
+        """Draw the icon: little green square with a white lightning bolt."""
         img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
         d = ImageDraw.Draw(img)
         d.rounded_rectangle((4, 4, 60, 60), radius=14, fill=ACCENT)
@@ -205,16 +205,16 @@ class MiniWidget:
 
     def _init_tray(self):
         menu = pystray.Menu(
-            pystray.MenuItem("Mostrar / Ocultar", self._tray_toggle, default=True),
-            pystray.MenuItem("Salir", self._tray_quit),
+            pystray.MenuItem("Show / Hide", self._tray_toggle, default=True),
+            pystray.MenuItem("Quit", self._tray_quit),
         )
         self.tray = pystray.Icon("NetQuick", self._tray_image(),
-                                 f"NetQuick v{__version__} — clic para mostrar/ocultar",
+                                 f"NetQuick v{__version__} — click to show/hide",
                                  menu)
         threading.Thread(target=self.tray.run, daemon=True).start()
 
     def _tray_toggle(self, icon=None, item=None):
-        # pystray corre en otro hilo: pasar la orden al hilo de tkinter
+        # pystray runs on another thread: hand the order to the tkinter thread
         self.root.after(0, self._toggle_visible)
 
     def _toggle_visible(self):
@@ -230,14 +230,14 @@ class MiniWidget:
             self.tray.stop()
         self.root.after(0, self.root.destroy)
 
-    def cerrar(self):
-        """✕: si hay icono de bandeja, solo oculta; si no, cierra del todo."""
+    def close(self):
+        """✕: if there's a tray icon, only hide; otherwise close entirely."""
         if self.tray:
             self.root.withdraw()
         else:
             self.root.destroy()
 
-    # --- Arrastre -----------------------------------------------------------
+    # --- Dragging -----------------------------------------------------------
     def _drag_start(self, ev):
         self._dx, self._dy = ev.x, ev.y
 
@@ -245,72 +245,73 @@ class MiniWidget:
         self.root.geometry(f"+{self.root.winfo_x() + ev.x - self._dx}"
                            f"+{self.root.winfo_y() + ev.y - self._dy}")
 
-    # --- Lógica -------------------------------------------------------------
+    # --- Logic --------------------------------------------------------------
     def _iface_name(self):
-        """Nombre real de la interfaz elegida (el combo muestra 'nombre — IP')."""
+        """Real name of the chosen interface (the combo shows 'name — IP')."""
         return self._display.get(self.iface.get(), self.iface.get())
 
-    def _iface_elegida(self):
-        """El usuario eligió interfaz en el combo: recordarla para el próximo
-        arranque (solo la elección explícita, no la selección automática)."""
-        nombre = self._iface_name()
-        if nombre and nombre != self.config.get("ultima_interfaz"):
-            self.config["ultima_interfaz"] = nombre
+    def _iface_chosen(self):
+        """The user picked an interface in the combo: remember it for the next
+        startup (only the explicit choice, not the automatic selection)."""
+        name = self._iface_name()
+        if name and name != self.config.get("last_interface"):
+            self.config["last_interface"] = name
             self.store.save_config(self.config)
         self._on_iface()
 
-    def refrescar(self, select_default=False):
+    def refresh(self, select_default=False):
         ifaces = self.ops.list_interfaces()
-        actual = self._iface_name()
-        self._map = {i["nombre"]: i["ip"] for i in ifaces}
-        # El combo muestra también la IP para distinguir las interfaces de un vistazo
-        self._display = {f"{n} — {ip or 'sin IP'}": n for n, ip in self._map.items()}
+        current = self._iface_name()
+        self._map = {i["name"]: i["ip"] for i in ifaces}
+        # The combo also shows the IP to tell interfaces apart at a glance
+        self._display = {f"{n} — {ip or 'no IP'}": n for n, ip in self._map.items()}
         self.iface["values"] = list(self._display.keys())
-        nombres = list(self._map.keys())
-        if nombres and (select_default or actual not in self._map):
-            # Volver a la última interfaz que usó el usuario; si ya no existe,
-            # la primera activa.
-            ultima = self.config.get("ultima_interfaz", "")
-            actual = ultima if ultima in self._map else nombres[0]
+        names = list(self._map.keys())
+        if names and (select_default or current not in self._map):
+            # Return to the last interface the user used; if it's gone, the
+            # first active one.
+            last = self.config.get("last_interface", "")
+            current = last if last in self._map else names[0]
         for disp, n in self._display.items():
-            if n == actual:
+            if n == current:
                 self.iface.set(disp)
                 break
         self._on_iface()
 
     def _on_iface(self):
-        nombre = self._iface_name()
-        cfg = self.ops.get_config(nombre) if nombre else \
+        name = self._iface_name()
+        cfg = self.ops.get_config(name) if name else \
             {"dhcp": False, "ip": "", "mask": "", "gw": "", "dns": ""}
-        ip = cfg["ip"] or self._map.get(nombre, "")
+        ip = cfg["ip"] or self._map.get(name, "")
         self._dhcp = cfg["dhcp"]
         self._put(self.ip, ip)
         self._put(self.mask, cfg["mask"] or "255.255.255.0")
         self._put(self.gw, cfg["gw"])
         self._put(self.dns, cfg["dns"])
-        # foto de lo aplicado: contra esto se detectan cambios pendientes
-        self._aplicado = (self._val(self.ip), self._val(self.mask),
-                          self._val(self.gw), self._val(self.dns))
-        # Estado siempre visible: interfaz, IP con la que quedó y modo actual
-        if nombre:
-            modo = "Auto (DHCP)" if cfg["dhcp"] else "IP fija"
-            self._msg(f"● {nombre}  ·  {ip or 'sin IP'}  ·  {modo}",
+        # snapshot of what's applied: pending changes are detected against this
+        self._applied = (self._val(self.ip), self._val(self.mask),
+                         self._val(self.gw), self._val(self.dns))
+        # Always-visible status: interface, resulting IP and current mode
+        if name:
+            mode = "Auto (DHCP)" if cfg["dhcp"] else "Static IP"
+            self._msg(f"● {name}  ·  {ip or 'no IP'}  ·  {mode}",
                       OK if ip else ERR)
         else:
-            self._msg("Sin interfaces activas", ERR)
+            self._msg("No active interfaces", ERR)
         self._render_profiles()
         self._update_mode_buttons()
 
     def _update_mode_buttons(self):
-        """El color dice qué modo está seleccionado y el botón del modo activo
-        se desactiva (verde con ✔, sin clic posible): no hay forma de provocar
-        el error 'ya estaba en ese modo'. Editar un campo enciende 'Aplicar IP'."""
-        if not hasattr(self, "btn_aplicar"):
+        """The color says which mode is selected and the active mode's button
+        is disabled (green with ✔, no click possible): there's no way to
+        trigger the 'already in that mode' error. Editing a field lights up
+        'Apply IP'."""
+        if not hasattr(self, "btn_apply"):
             return
         dhcp = getattr(self, "_dhcp", False)
-        campos = (self._val(self.ip), self._val(self.mask),
+        fields = (self._val(self.ip), self._val(self.mask),
                   self._val(self.gw), self._val(self.dns))
-        pendiente = campos != getattr(self, "_aplicado", ("", "", "", ""))
+        pending = fields != getattr(self, "_applied", ("", "", "", ""))
 
         if dhcp:
             self.btn_dhcp.config(text="✔ Auto (DHCP)", bg=ACCENT,
@@ -322,90 +323,91 @@ class MiniWidget:
                                  activeforeground=TEXT,
                                  state="normal", cursor="hand2")
 
-        if not dhcp and not pendiente and campos[0]:
-            self.btn_aplicar.config(text="✔ IP fija aplicada", bg=ACCENT_DARK,
-                                    disabledforeground="white",
-                                    state="disabled", cursor="arrow")
-        elif pendiente:
-            self.btn_aplicar.config(text="Aplicar IP", bg=ACCENT, fg="white",
-                                    activebackground=ACCENT_DARK,
-                                    activeforeground="white",
-                                    state="normal", cursor="hand2")
+        if not dhcp and not pending and fields[0]:
+            self.btn_apply.config(text="✔ Static IP applied", bg=ACCENT_DARK,
+                                  disabledforeground="white",
+                                  state="disabled", cursor="arrow")
+        elif pending:
+            self.btn_apply.config(text="Apply IP", bg=ACCENT, fg="white",
+                                  activebackground=ACCENT_DARK,
+                                  activeforeground="white",
+                                  state="normal", cursor="hand2")
         else:
-            self.btn_aplicar.config(text="Aplicar IP", bg=CARD, fg=TEXT,
-                                    activebackground=CARD_HOVER,
-                                    activeforeground=TEXT,
-                                    state="normal", cursor="hand2")
+            self.btn_apply.config(text="Apply IP", bg=CARD, fg=TEXT,
+                                  activebackground=CARD_HOVER,
+                                  activeforeground=TEXT,
+                                  state="normal", cursor="hand2")
 
-    def _msg(self, texto, color=MUTED):
-        self.status.config(text=texto, fg=color)
+    def _msg(self, text, color=MUTED):
+        self.status.config(text=text, fg=color)
 
-    # --- Confirmación con auto-revert (issue #21) ---------------------------
+    # --- Confirmation with auto-revert (issue #21) --------------------------
     def _build_revert_frame(self):
-        """Barra oculta que aparece tras aplicar IP fija sin salida verificada:
-        si el usuario no confirma antes de que venza la cuenta, se revierte."""
+        """Hidden bar that appears after applying a static IP without a
+        verified way out: if the user doesn't confirm before the countdown
+        expires, it reverts."""
         self.revert_frame = tk.Frame(self.card, bg=BG)
-        tk.Label(self.revert_frame, text="¿Sigues conectado?", bg=BG, fg=WARN,
+        tk.Label(self.revert_frame, text="Still connected?", bg=BG, fg=WARN,
                  font=("Segoe UI", 8, "bold")).pack(side="left")
-        self.btn_mantener = tk.Button(self.revert_frame, text="✔ Mantener cambio",
-                                      bg=WARN, fg="white", bd=0,
-                                      activebackground="#92400E",
-                                      activeforeground="white",
-                                      font=("Segoe UI", 8, "bold"), cursor="hand2",
-                                      command=self._confirmar_cambio)
-        self.btn_mantener.pack(side="right", ipadx=8, ipady=1)
+        self.btn_keep = tk.Button(self.revert_frame, text="✔ Keep change",
+                                  bg=WARN, fg="white", bd=0,
+                                  activebackground="#92400E",
+                                  activeforeground="white",
+                                  font=("Segoe UI", 8, "bold"), cursor="hand2",
+                                  command=self._confirm_change)
+        self.btn_keep.pack(side="right", ipadx=8, ipady=1)
 
-    def _armar_confirmacion(self, nombre, previa, gw):
-        """Lección Meta 2021: la herramienta que rompe la red no puede ser el
-        único rescate. Tras aplicar IP fija se verifica la salida (ping al
-        gateway); si no se puede confirmar conectividad, cuenta regresiva al
-        estilo del cambio de resolución de Windows — sin confirmación humana,
-        se vuelve solo a la config previa (revert 100 % local)."""
-        if gw and self.ops.gateway_responde(gw):
-            return  # salida verificada: el cambio se queda sin preguntar
-        self._revert_previa = (nombre, previa)
-        self._revert_restante = 30
+    def _arm_confirmation(self, name, previous, gw):
+        """Meta 2021 lesson: the tool that breaks the network can't be the only
+        rescue. After applying a static IP the way out is verified (ping to the
+        gateway); if connectivity can't be confirmed, a countdown in the style
+        of the Windows resolution change — without human confirmation it goes
+        back to the previous config on its own (revert is 100% local)."""
+        if gw and self.ops.gateway_responds(gw):
+            return  # verified way out: the change stays without asking
+        self._revert_previous = (name, previous)
+        self._revert_remaining = 30
         self.revert_frame.pack(fill="x", padx=12, pady=(0, 4),
                                before=self.status)
         self._revert_tick()
 
     def _revert_tick(self):
-        if self._revert_previa is None:
+        if self._revert_previous is None:
             return
-        if self._revert_restante <= 0:
-            return self._revertir_ahora()
-        self.btn_mantener.config(
-            text=f"✔ Mantener cambio ({self._revert_restante} s)")
-        self._revert_restante -= 1
+        if self._revert_remaining <= 0:
+            return self._revert_now()
+        self.btn_keep.config(
+            text=f"✔ Keep change ({self._revert_remaining} s)")
+        self._revert_remaining -= 1
         self._revert_after = self.root.after(1000, self._revert_tick)
 
-    def _cancelar_confirmacion(self):
+    def _cancel_confirmation(self):
         if self._revert_after:
             self.root.after_cancel(self._revert_after)
             self._revert_after = None
-        self._revert_previa = None
+        self._revert_previous = None
         self.revert_frame.pack_forget()
 
-    def _confirmar_cambio(self):
-        self._cancelar_confirmacion()
-        self._msg("✔ Cambio confirmado", OK)
+    def _confirm_change(self):
+        self._cancel_confirmation()
+        self._msg("✔ Change confirmed", OK)
 
-    def _revertir_ahora(self):
-        nombre, previa = self._revert_previa
-        self._cancelar_confirmacion()
-        ok, _ = self.ops.revertir_a(nombre, previa)
-        self.refrescar()
-        # después de refrescar: _on_iface pisa el status con el estado normal
+    def _revert_now(self):
+        name, previous = self._revert_previous
+        self._cancel_confirmation()
+        ok, _ = self.ops.revert_to(name, previous)
+        self.refresh()
+        # after refresh: _on_iface overwrites the status with the normal state
         if ok:
-            self._msg("⏪ Sin confirmación a tiempo: config anterior restaurada",
+            self._msg("⏪ No confirmation in time: previous config restored",
                       WARN)
         else:
-            self._msg("✗ No se pudo revertir — revisa la red", ERR)
+            self._msg("✗ Could not revert — check the network", ERR)
 
-    def _repoblar_tras_relanzar(self):
-        """Si venimos de un relanzamiento como admin, restaurar la interfaz
-        elegida y lo que el usuario había tecleado (issue #17)."""
-        pend = _args_relanzamiento()
+    def _repopulate_after_relaunch(self):
+        """If we come from a relaunch as admin, restore the chosen interface
+        and whatever the user had typed (issue #17)."""
+        pend = _relaunch_args()
         if not (pend.ip or pend.mask or pend.gw):
             return
         if pend.iface:
@@ -422,7 +424,7 @@ class MiniWidget:
     def _ensure_admin(self):
         if self.ops.is_admin():
             return True
-        self._msg("Pidiendo permisos de administrador…", MUTED)
+        self._msg("Requesting administrator permissions…", MUTED)
         self.ops.relaunch_as_admin(__file__, {
             "--iface": self._iface_name(),
             "--ip": self._val(self.ip),
@@ -431,114 +433,114 @@ class MiniWidget:
         })
         return False
 
-    def _aplicar_estrategia(self, estrategia):
-        """Camino común de aplicar red: interfaz elegida, admin, ejecutar la
-        estrategia (IPFija/DHCP) y reflejar el resultado. Devuelve ok."""
-        nombre = self._iface_name()
-        if not nombre:
-            self._msg("Elige una interfaz", ERR)
+    def _apply_strategy(self, strategy):
+        """Common apply path: chosen interface, admin, run the strategy
+        (StaticIP/DHCP) and reflect the result. Returns ok."""
+        name = self._iface_name()
+        if not name:
+            self._msg("Pick an interface", ERR)
             return False
         if not self._ensure_admin():
             return False
-        # Aplicar algo nuevo (incluido el botón DHCP como rescate manual)
-        # anula cualquier cuenta regresiva pendiente.
-        self._cancelar_confirmacion()
-        previa = self.ops.get_config(nombre)
-        ok, msg = estrategia.aplicar(self.ops, nombre)
-        # Tres estados honestos: verde = éxito limpio; ámbar = aplicado pero con
-        # avisos (p.ej. gateway fuera de subred); rojo = no se aplicó (rechazo,
-        # error de netsh, o DNS a medias). Nunca "verde" ocultando un problema.
+        # Applying something new (including the DHCP button as a manual rescue)
+        # cancels any pending countdown.
+        self._cancel_confirmation()
+        previous = self.ops.get_config(name)
+        ok, msg = strategy.apply(self.ops, name)
+        # Three honest states: green = clean success; amber = applied but with
+        # warnings (e.g. gateway outside the subnet); red = not applied
+        # (reject, netsh error, or half-done DNS). Never "green" hiding a
+        # problem.
         if ok:
             self._msg("✔ " + msg, WARN if "⚠" in msg else OK)
-            self.refrescar()
-            if isinstance(estrategia, netops.IPFija):
-                self._armar_confirmacion(nombre, previa, estrategia.gw)
+            self.refresh()
+            if isinstance(strategy, netops.StaticIP):
+                self._arm_confirmation(name, previous, strategy.gw)
         else:
             self._msg("✗ " + msg, ERR)
         return ok
 
-    def aplicar_ip(self):
-        self._aplicar_estrategia(netops.IPFija(
+    def apply_ip(self):
+        self._apply_strategy(netops.StaticIP(
             self._val(self.ip), self._val(self.mask) or "255.255.255.0",
             self._val(self.gw), self._val(self.dns)))
 
-    def aplicar_dhcp(self):
-        if self._aplicar_estrategia(netops.DHCP()):
-            # el servidor DHCP tarda un par de segundos en dar la IP nueva
-            self.root.after(2500, self.refrescar)
-            self.root.after(6000, self.refrescar)
+    def apply_dhcp(self):
+        if self._apply_strategy(netops.DHCP()):
+            # the DHCP server takes a couple of seconds to hand out the new IP
+            self.root.after(2500, self.refresh)
+            self.root.after(6000, self.refresh)
 
-    def aplicar_perfil(self, nombre):
-        p = self.profiles.get(nombre, {})
+    def apply_profile(self, name):
+        p = self.profiles.get(name, {})
         self._put(self.ip, p.get("ip", ""))
         self._put(self.mask, p.get("mask", "255.255.255.0"))
         self._put(self.gw, p.get("gw", ""))
         self._put(self.dns, p.get("dns", ""))
-        self._aplicar_estrategia(netops.estrategia_de_perfil(p))
+        self._apply_strategy(netops.strategy_from_profile(p))
 
-    # --- Escáner de dispositivos ---------------------------------------------
-    def abrir_scanner(self):
-        nombre = self._iface_name()
-        if not nombre:
-            return self._msg("Elige una interfaz", ERR)
+    # --- Device scanner -----------------------------------------------------
+    def open_scanner(self):
+        name = self._iface_name()
+        if not name:
+            return self._msg("Pick an interface", ERR)
 
         win = tk.Toplevel(self.root)
-        win.title("Dispositivos en la red — NetQuick")
+        win.title("Devices on the network — NetQuick")
         win.configure(bg=BG)
         win.attributes("-topmost", True)
         win.geometry("460x400")
 
         head = tk.Frame(win, bg=BG)
         head.pack(fill="x", padx=14, pady=(12, 2))
-        tk.Label(head, text="Dispositivos en la red", bg=BG, fg=TEXT,
+        tk.Label(head, text="Devices on the network", bg=BG, fg=TEXT,
                  font=("Segoe UI", 12, "bold")).pack(side="left")
-        btn_re = tk.Button(head, text="⟳ Reescanear", bg=ACCENT, fg="white", bd=0,
+        btn_re = tk.Button(head, text="⟳ Rescan", bg=ACCENT, fg="white", bd=0,
                            activebackground=ACCENT_DARK, activeforeground="white",
                            font=("Segoe UI", 8, "bold"), cursor="hand2")
         btn_re.pack(side="right", ipadx=8, ipady=2)
 
-        estado = tk.Label(win, text="", bg=BG, fg=MUTED,
-                          font=("Segoe UI", 8), anchor="w")
-        estado.pack(fill="x", padx=14)
+        status_lbl = tk.Label(win, text="", bg=BG, fg=MUTED,
+                              font=("Segoe UI", 8), anchor="w")
+        status_lbl.pack(fill="x", padx=14)
 
-        lista = tk.Frame(win, bg=BG)
-        lista.pack(fill="both", expand=True, padx=14, pady=8)
+        list_frame = tk.Frame(win, bg=BG)
+        list_frame.pack(fill="both", expand=True, padx=14, pady=8)
 
-        def render(dispositivos):
+        def render(devices):
             if not win.winfo_exists():
                 return
-            for w in lista.winfo_children():
+            for w in list_frame.winfo_children():
                 w.destroy()
-            if not dispositivos:
-                estado.config(text="✗ Ningún equipo respondió", fg=ERR)
+            if not devices:
+                status_lbl.config(text="✗ No device responded", fg=ERR)
                 return
-            estado.config(text=f"✔ {len(dispositivos)} dispositivos encontrados",
-                          fg=OK)
-            for d in dispositivos:
-                row = tk.Frame(lista, bg=CARD)
+            status_lbl.config(text=f"✔ {len(devices)} devices found", fg=OK)
+            for d in devices:
+                row = tk.Frame(list_frame, bg=CARD)
                 row.pack(fill="x", pady=2)
-                es_dante = bool(d.get("dante"))
-                tk.Label(row, text="⚡" if es_dante else "●", bg=CARD,
-                         fg=ACCENT if es_dante else OK,
+                is_dante = bool(d.get("dante"))
+                tk.Label(row, text="⚡" if is_dante else "●", bg=CARD,
+                         fg=ACCENT if is_dante else OK,
                          font=("Segoe UI", 10)).pack(side="left", padx=(8, 4))
-                texto = d["ip"] + ("  (este PC)" if d["propia"] else "")
-                tk.Label(row, text=texto, bg=CARD, fg=TEXT, font=("Consolas", 9),
+                text = d["ip"] + ("  (this PC)" if d["own"] else "")
+                tk.Label(row, text=text, bg=CARD, fg=TEXT, font=("Consolas", 9),
                          width=22, anchor="w").pack(side="left")
-                fabricante = self.ops.fabricante_mac(d["mac"])
-                partes_det = []
-                if es_dante:
-                    nombre_d = d["dante"]
-                    partes_det.append("Dante" if nombre_d == "Dante"
-                                      else f"Dante · {nombre_d}")
+                vendor = self.ops.mac_vendor(d["mac"])
+                detail_parts = []
+                if is_dante:
+                    dante_name = d["dante"]
+                    detail_parts.append("Dante" if dante_name == "Dante"
+                                        else f"Dante · {dante_name}")
                 if d["mac"]:
-                    partes_det.append(d["mac"])
-                if fabricante:
-                    partes_det.append(fabricante)
-                tk.Label(row, text="   ".join(partes_det), bg=CARD,
-                         fg=ACCENT if es_dante else MUTED,
-                         font=("Segoe UI", 8, "bold" if es_dante else "normal"),
+                    detail_parts.append(d["mac"])
+                if vendor:
+                    detail_parts.append(vendor)
+                tk.Label(row, text="   ".join(detail_parts), bg=CARD,
+                         fg=ACCENT if is_dante else MUTED,
+                         font=("Segoe UI", 8, "bold" if is_dante else "normal"),
                          anchor="w").pack(side="left", fill="x", expand=True)
-                if not d["propia"]:
+                if not d["own"]:
                     tk.Button(row, text="Web", bg=CARD, fg=ERR, bd=0,
                               activebackground=CARD_HOVER, activeforeground=ERR,
                               font=("Segoe UI", 8, "bold"), cursor="hand2",
@@ -546,42 +548,42 @@ class MiniWidget:
                                   webbrowser.open(f"http://{ip}")
                               ).pack(side="right", padx=8, pady=2)
 
-        def escanear():
-            ip = self.ops.get_ip(nombre)
+        def scan():
+            ip = self.ops.get_ip(name)
             if not ip:
-                estado.config(text="✗ La interfaz no tiene IP", fg=ERR)
+                status_lbl.config(text="✗ The interface has no IP", fg=ERR)
                 return
-            estado.config(text=f"Escaneando la red de {ip}…", fg=MUTED)
+            status_lbl.config(text=f"Scanning the network of {ip}…", fg=MUTED)
             btn_re.config(state="disabled")
 
-            def trabajo():
-                dispositivos = self.ops.scan_red(nombre)
-                def terminar():
+            def work():
+                devices = self.ops.scan_network(name)
+                def finish():
                     if win.winfo_exists():
                         btn_re.config(state="normal")
-                        render(dispositivos)
-                self.root.after(0, terminar)
+                        render(devices)
+                self.root.after(0, finish)
 
-            threading.Thread(target=trabajo, daemon=True).start()
+            threading.Thread(target=work, daemon=True).start()
 
-        btn_re.config(command=escanear)
-        escanear()
+        btn_re.config(command=scan)
+        scan()
 
-    # --- Ventana de configuración ------------------------------------------
-    def abrir_config(self):
+    # --- Settings window ----------------------------------------------------
+    def open_config(self):
         win = tk.Toplevel(self.root)
-        win.title("Configuración — NetQuick")
+        win.title("Settings — NetQuick")
         win.configure(bg=BG)
         win.attributes("-topmost", True)
         win.resizable(False, False)
         win.geometry("360x420")
 
-        tk.Label(win, text="⚙ Configuración", bg=BG, fg=TEXT,
+        tk.Label(win, text="⚙ Settings", bg=BG, fg=TEXT,
                  font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=16, pady=(14, 8))
 
-        # Inicio con Windows
+        # Start with Windows
         self.startup_var = tk.BooleanVar(value=winsetup.in_startup())
-        chk = tk.Checkbutton(win, text="Iniciar con Windows (siempre visible)",
+        chk = tk.Checkbutton(win, text="Start with Windows (always visible)",
                              variable=self.startup_var, bg=BG, fg=TEXT,
                              selectcolor=CARD, activebackground=BG, activeforeground=TEXT,
                              font=("Segoe UI", 9), cursor="hand2",
@@ -590,10 +592,10 @@ class MiniWidget:
 
         tk.Frame(win, bg=CARD, height=1).pack(fill="x", padx=16, pady=12)
 
-        # Perfiles
-        tk.Label(win, text="Perfiles guardados", bg=BG, fg=TEXT,
+        # Profiles
+        tk.Label(win, text="Saved profiles", bg=BG, fg=TEXT,
                  font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=16)
-        tk.Label(win, text="Guarda una IP/máscara/gateway con un nombre y aplícala de 1 clic.",
+        tk.Label(win, text="Save an IP/mask/gateway with a name and apply it in 1 click.",
                  bg=BG, fg=MUTED, font=("Segoe UI", 8), wraplength=320,
                  justify="left").pack(anchor="w", padx=16, pady=(0, 6))
 
@@ -601,31 +603,31 @@ class MiniWidget:
         self.prof_list.pack(fill="x", padx=16)
         self._render_config_profiles(win)
 
-        # Guardar los valores actuales como perfil nuevo
+        # Save the current values as a new profile
         add = tk.Frame(win, bg=BG)
         add.pack(fill="x", padx=16, pady=(10, 6))
-        tk.Label(add, text="Nombre:", bg=BG, fg=MUTED,
+        tk.Label(add, text="Name:", bg=BG, fg=MUTED,
                  font=("Segoe UI", 9)).pack(side="left")
         name_e = tk.Entry(add, bg=CARD, fg=TEXT, bd=0, insertbackground=TEXT,
                           font=("Segoe UI", 9), width=12)
         name_e.pack(side="left", padx=6, ipady=2)
-        tk.Button(add, text="Guardar valores actuales", bg=ACCENT, fg="white", bd=0,
+        tk.Button(add, text="Save current values", bg=ACCENT, fg="white", bd=0,
                   activebackground=ACCENT_DARK, activeforeground="white",
                   font=("Segoe UI", 8, "bold"), cursor="hand2",
-                  command=lambda: self._guardar_perfil(name_e.get(), win)
+                  command=lambda: self._save_profile(name_e.get(), win)
                   ).pack(side="left", ipadx=4, ipady=2)
 
     def _render_config_profiles(self, win):
         for w in self.prof_list.winfo_children():
             w.destroy()
         if not self.profiles:
-            tk.Label(self.prof_list, text="(aún no hay perfiles)", bg=BG, fg=MUTED,
+            tk.Label(self.prof_list, text="(no profiles yet)", bg=BG, fg=MUTED,
                      font=("Segoe UI", 9, "italic")).pack(anchor="w")
             return
-        for nombre, p in self.profiles.items():
+        for name, p in self.profiles.items():
             row = tk.Frame(self.prof_list, bg=CARD)
             row.pack(fill="x", pady=2)
-            det = f"{nombre}:  {p.get('ip', '?')} / {p.get('mask', '?')}"
+            det = f"{name}:  {p.get('ip', '?')} / {p.get('mask', '?')}"
             if p.get("gw"):
                 det += f"  gw {p['gw']}"
             if p.get("dns"):
@@ -634,14 +636,14 @@ class MiniWidget:
                      anchor="w").pack(side="left", fill="x", expand=True, padx=8, pady=4)
             tk.Button(row, text="🗑", bg=CARD, fg=ERR, bd=0, activebackground=CARD,
                       cursor="hand2", font=("Segoe UI", 9),
-                      command=lambda n=nombre: self._borrar_perfil(n, win)
+                      command=lambda n=name: self._delete_profile(n, win)
                       ).pack(side="right", padx=6)
 
-    def _guardar_perfil(self, nombre, win):
-        nombre = nombre.strip()
-        if not nombre:
+    def _save_profile(self, name, win):
+        name = name.strip()
+        if not name:
             return
-        self.profiles[nombre] = {
+        self.profiles[name] = {
             "ip": self._val(self.ip),
             "mask": self._val(self.mask) or "255.255.255.0",
             "gw": self._val(self.gw),
@@ -651,8 +653,8 @@ class MiniWidget:
         self._render_config_profiles(win)
         self._render_profiles()
 
-    def _borrar_perfil(self, nombre, win):
-        self.profiles.pop(nombre, None)
+    def _delete_profile(self, name, win):
+        self.profiles.pop(name, None)
         self.store.save_profiles(self.profiles)
         self._render_config_profiles(win)
         self._render_profiles()
@@ -663,9 +665,9 @@ class MiniWidget:
             self.startup_var.set(winsetup.in_startup())
 
 
-def _args_relanzamiento():
-    """Valores que venían tecleados cuando la app se relanzó como admin
-    (issue #17): se reciben por argumentos y se repueblan al arrancar."""
+def _relaunch_args():
+    """Values that were typed when the app relaunched as admin (issue #17):
+    they arrive as arguments and are repopulated at startup."""
     p = argparse.ArgumentParser(add_help=False)
     for flag in ("--iface", "--ip", "--mask", "--gw"):
         p.add_argument(flag, default="")
@@ -674,7 +676,7 @@ def _args_relanzamiento():
 
 
 if __name__ == "__main__":
-    if not winsetup.ya_corriendo():
+    if not winsetup.already_running():
         winsetup.dpi_awareness()
-        winsetup.primer_arranque_exe()
+        winsetup.first_run_exe()
         MiniWidget().run()
