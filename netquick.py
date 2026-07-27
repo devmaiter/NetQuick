@@ -19,7 +19,7 @@ import netops
 import store
 import winsetup
 
-__version__ = "1.2.2-beta"
+__version__ = "1.3.0-beta"
 
 try:
     import pystray

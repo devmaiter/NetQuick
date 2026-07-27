@@ -3,6 +3,26 @@
 Historial de cambios de NetQuick. La versión del código vive en
 `netquick.py` (`__version__`) y es la única fuente de verdad.
 
+## [1.3.0-beta] — sin publicar
+
+- Auto-revert (issue #21): tras aplicar IP fija se verifica el gateway; si no
+  responde, cuenta regresiva de 30 s con botón "Mantener cambio" y vuelta
+  automática a la configuración anterior. El revert va por netsh directo,
+  sin depender de la red (lección Meta 2021).
+- Detección de IP en uso reforzada (issue #20 / FM-2): sonda ARP dirigida para
+  equipos que callan al ping; fuera de la subred local ya no se finge certeza —
+  se aplica con el aviso "no se pudo verificar que la IP estuviera libre".
+- Honestidad transaccional (issue #22): si el DNS falla tras aplicar la IP, el
+  resultado es fallo (rojo), no éxito con letra pequeña; tercer estado ámbar
+  para "aplicado con avisos".
+- Escritura durable de perfiles/config y log estructurado por intento
+  (op/resultado/motivo/duración) en `%LOCALAPPDATA%\NetQuick\netquick.log`.
+- Refactor testeable: UI instanciable con operaciones y persistencia
+  inyectables (`store.py`, `winsetup.py`); 90 tests con fakes, ruff y
+  cobertura mínima en CI.
+- Docs: backlog de confiabilidad (`docs/backlog-confiabilidad.md`) y
+  experimento de validación FM-2 (`experimentos/exp_ip_en_uso.py`).
+
 ## [1.2.2-beta] — 2026-07-18
 
 - Campo DNS al aplicar IP estática — adiós al "tengo IP pero no internet".

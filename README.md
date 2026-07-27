@@ -2,7 +2,7 @@
 
 <img src="https://img.shields.io/badge/Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white" alt="Windows"/>
 <img src="https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python"/>
-<img src="https://img.shields.io/badge/Version-1.2.2--beta-orange?style=for-the-badge" alt="Version"/>
+<img src="https://img.shields.io/badge/Version-1.3.0--beta-orange?style=for-the-badge" alt="Version"/>
 <img src="https://img.shields.io/badge/Estado-Beta%20%2F%20Demo%20en%20desarrollo-red?style=for-the-badge" alt="Estado"/>
 <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License"/>
 
@@ -43,13 +43,17 @@ Tras instalar, abre una terminal nueva y escribe **`netquick`**, o usa el acceso
 | Archivo | Qué es |
 |---|---|
 | `netquick.py` | **La aplicación** — widget flotante + icono de bandeja |
-| `netops.py` | Operaciones de red (netsh, psutil, escáner, mDNS Dante) |
+| `netops.py` | Operaciones de red (netsh, psutil, escáner, mDNS Dante, revert de emergencia) |
+| `store.py` | Persistencia de perfiles y configuración (JSON con escritura durable) |
+| `winsetup.py` | Integración con Windows (inicio automático, DPI, instancia única) |
 | `NetQuick.vbs` | Lanzador sin ventana de consola (doble clic) |
 | `NetQuick.spec` | Empaquetado del `.exe` con PyInstaller |
 | `install.ps1` / `install-src.ps1` | Instaladores por terminal (`irm ... \| iex`) |
 | `uninstall.ps1` | Desinstalador (revierte archivos, PATH, accesos e inicio con Windows) |
 | `setup.ps1` | Setup de desarrollo (instala dependencias) |
-| `tests/` | Tests de `netops` (pytest, corren en CI) |
+| `tests/` | Tests de `netops`, `store`, `winsetup` y la UI con fakes (pytest, corren en CI) |
+| `docs/` | Backlog de confiabilidad y notas de ingeniería |
+| `experimentos/` | Scripts para validar hipótesis en una LAN real |
 | `CHANGELOG.md` | Historial de cambios |
 
 ---
@@ -63,6 +67,10 @@ Tras instalar, abre una terminal nueva y escribe **`netquick`**, o usa el acceso
 | 🏷️ **Perfiles guardados** | Guarda combinaciones IP/máscara/gateway (*Casa*, *U*, *Trabajo*) y aplícalas de 1 clic |
 | 🔄 **DHCP / IP fija** | Cambia de modo con un clic; el color indica el modo activo |
 | 🔍 **Escáner de red** | Compatible con redes Dante (máscara real y link-local /16), descubrimiento mDNS nativo |
+| 🚫 **Anti-IP duplicada** | Antes de aplicar comprueba que la IP esté libre: ping + sonda ARP dirigida (detecta equipos que callan al ping); si no puede verificar, lo dice |
+| ⏪ **Auto-revert** | Si la IP aplicada te deja sin salida (el gateway no responde), cuenta regresiva de 30 s y vuelta automática a la config anterior — el revert es 100 % local |
+| 🚦 **Estados honestos** | Verde = éxito limpio · ámbar = aplicado con avisos · rojo = no se aplicó; nunca verde ocultando un problema |
+| 📋 **Log estructurado** | Cada intento queda en `%LOCALAPPDATA%\NetQuick\netquick.log` con operación, resultado y duración |
 | ⚙️ **Iniciar con Windows** | Opción en la rueda ⚙ del widget |
 | 🛡️ **Permisos de Admin** | Solicitud automática cuando hace falta |
 
