@@ -5,6 +5,12 @@ Historial de cambios de NetQuick. La versión del código vive en
 
 ## [1.3.0-beta] — sin publicar
 
+- Seguridad (FM-5): NetQuick ya no se auto-registra para iniciar con Windows en
+  el primer arranque — se queda en la bandeja al abrirse y el inicio automático
+  es opción del usuario en ⚙ (apagada por defecto). Cuando se activa, el
+  `task.xml` se genera en `%SystemRoot%\Temp` (solo admin), no en `%APPDATA%`,
+  cerrando la ventana TOCTOU de elevación de privilegios local. Se elimina la
+  clave `Run` insegura de versiones previas sin recrear la tarea.
 - Auto-revert (issue #21): tras aplicar IP fija se verifica el gateway; si no
   responde, cuenta regresiva de 30 s con botón "Mantener cambio" y vuelta
   automática a la configuración anterior. El revert va por netsh directo,

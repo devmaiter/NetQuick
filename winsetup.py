@@ -23,7 +23,6 @@ if FROZEN:
     os.makedirs(APP_DIR, exist_ok=True)
 else:
     APP_DIR = HERE
-FIRSTRUN_FILE = os.path.join(APP_DIR, ".firstrun")
 VBS_SRC = os.path.join(HERE, "NetQuick.vbs")
 STARTUP_DIR = os.path.join(os.environ.get("APPDATA", ""),
                            r"Microsoft\Windows\Start Menu\Programs\Startup")
@@ -74,20 +73,46 @@ def in_startup():
     return os.path.exists(VBS_DST)
 
 
+def _dir_solo_admin():
+    """Carpeta escribible SOLO por administradores/SYSTEM, no por usuarios
+    estándar: %SystemRoot%\\Temp. El task.xml se genera aquí (no en %APPDATA%,
+    que es escribible por el usuario) para cerrar la ventana TOCTOU de FM-5:
+    un proceso sin privilegios no puede reescribir el XML entre que la app
+    elevada lo crea y schtasks lo lee. La app corre elevada, así que sí puede
+    escribir aquí."""
+    return os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "Temp")
+
+
+def _crear_tarea_inicio(exe):
+    """Crea la tarea programada de inicio desde un XML en carpeta solo-admin,
+    con nombre aleatorio, y lo borra al terminar. Devuelve True si schtasks
+    creó la tarea."""
+    import tempfile
+    try:
+        fd, xml_path = tempfile.mkstemp(suffix=".xml", prefix="netquick_",
+                                        dir=_dir_solo_admin())
+        with os.fdopen(fd, "w", encoding="utf-16") as f:
+            f.write(_task_xml(exe))
+    except OSError:
+        # Sin carpeta protegida donde escribir no se crea la tarea en un sitio
+        # inseguro: mejor no activar el inicio que hacerlo de forma vulnerable.
+        return False
+    try:
+        res = netops.run(["schtasks", "/Create", "/TN", TASK_NAME,
+                          "/XML", xml_path, "/F"])
+        return bool(res and res.returncode == 0)
+    finally:
+        try:
+            os.remove(xml_path)
+        except OSError:
+            pass
+
+
 def set_startup(on):
     try:
         if FROZEN:
             if on:
-                xml_path = os.path.join(APP_DIR, "task.xml")
-                with open(xml_path, "w", encoding="utf-16") as f:
-                    f.write(_task_xml(sys.executable))
-                res = netops.run(["schtasks", "/Create", "/TN", TASK_NAME,
-                                  "/XML", xml_path, "/F"])
-                try:
-                    os.remove(xml_path)
-                except OSError:
-                    pass
-                return bool(res and res.returncode == 0)
+                return _crear_tarea_inicio(sys.executable)
             netops.run(["schtasks", "/Delete", "/TN", TASK_NAME, "/F"])
             return True
         if on:
@@ -118,29 +143,23 @@ def regla_firewall():
 
 
 def primer_arranque_exe():
-    """La primera vez que corre el .exe se auto-registra para iniciar con
-    Windows (queda siempre en la bandeja). Solo una vez: si el usuario lo
-    desactiva en ⚙, se respeta su elección."""
+    """La primera vez que corre el .exe: regla de firewall y limpieza de
+    instalaciones previas. NetQuick ya NO se auto-registra para iniciar con
+    Windows — se abre, se queda en la bandeja, y punto. Iniciar con Windows es
+    una opción del usuario en ⚙ (apagada por defecto): la app no debe colarse
+    en el arranque elevado sin que el usuario lo pida."""
     if not FROZEN:
         return
     regla_firewall()
-    # Migrar instalaciones previas: quitar la clave Run (arrancaba sin
-    # permisos) y sustituirla por la tarea programada elevada.
+    # Migrar instalaciones previas: quitar la clave Run insegura (arrancaba sin
+    # permisos). NO se recrea la tarea: si el usuario quiere inicio automático,
+    # lo marca él mismo en ⚙.
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0,
                             winreg.KEY_ALL_ACCESS) as k:
             winreg.QueryValueEx(k, RUN_NAME)
             winreg.DeleteValue(k, RUN_NAME)
-            set_startup(True)
     except OSError:
-        pass
-    if os.path.exists(FIRSTRUN_FILE):
-        return
-    set_startup(True)
-    try:
-        with open(FIRSTRUN_FILE, "w") as f:
-            f.write("ok")
-    except Exception:
         pass
 
 

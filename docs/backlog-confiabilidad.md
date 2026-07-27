@@ -14,7 +14,7 @@ listan al final para no hacer cargo-cult.
 | 11. FoundationDB (sim. determinista) | **Sí, en miniatura** | Fuzzing con semilla fija → todo hallazgo reproducible (Issue E) |
 | 12. CrystalNet (clonar la red) | **Sí, en miniatura** | Backend `SimOps`/dry-run que ensaya sin tocar el adaptador (Issue C) |
 | 16. Erlang "let it crash" + supervisor | **Sí** | Supervisar el hilo del escáner: hoy un fallo lo deja colgado (Issue B) |
-| 17/18. Plano de control corre elevado | **Sí (seguridad)** | Hallazgo de seguridad del arranque elevado — se maneja en privado (Issue F) |
+| 17/18. Plano de control corre elevado | **Resuelto** | FM-5: no auto-arrancar elevado + `task.xml` en carpeta solo-admin (Issue F) |
 | Knight Capital / deploy gradual + rollback | **Sí, en miniatura** | Rollback ensayado del .exe + probar el camino de arranque poco ejercitado (Issue G) |
 | 13. Zelkova/Tiros (SMT, alcanzabilidad) | **No** | Overkill; la pregunta de red aquí es un escaneo LAN, no verificar políticas. El aviso "gateway fuera de subred" ya cubre lo útil. |
 | 14. B4 (SDN WAN al 100%) | **No** | Sin relación con una app de escritorio. |
@@ -101,14 +101,32 @@ de Hypothesis versionada para que un fallo se reproduzca al instante.
   y el paso en CI.
 - Aceptación: la suite property-based corre en CI de forma determinista.
 
-## Issue F — Hallazgo de seguridad (se maneja en privado)
+## Issue F — FM-5: EoP en el auto-arranque elevado — RESUELTO
 **Lección 17/18 (el plano de control corre elevado).** Prioridad: media (seguridad).
 
-Se identificó un vector de elevación de privilegios local en el flujo de
-auto-arranque elevado (FM-5 de la revisión formal). Los detalles del vector y el
-experimento de confirmación **no se documentan en este repo público**: se
-manejan en privado hasta confirmarlo y blindarlo. Archivar como issue con los
-detalles cuando el repositorio pase a privado.
+**El vector (ya corregido).** El `.exe` corre elevado y hacía dos cosas
+problemáticas:
+1. Se auto-registraba para iniciar con Windows en el **primer arranque**, sin
+   que el usuario lo pidiera — creando una tarea programada elevada por defecto.
+2. Para crearla escribía `task.xml` en `%APPDATA%\NetQuick` (escribible por el
+   usuario) antes de pasarlo a `schtasks /Create /XML` — ventana TOCTOU para que
+   un proceso sin privilegios reescribiera el XML e inyectara una tarea elevada
+   (elevación de privilegios local).
+
+**Fix aplicado.**
+- El inicio con Windows deja de ser automático: NetQuick solo se queda en la
+  bandeja al abrirse; el arranque elevado es opción explícita del usuario en ⚙
+  (apagada por defecto). La mayoría de instalaciones ya no crean la tarea.
+- Cuando el usuario sí la activa, el XML se genera con nombre aleatorio en
+  `%SystemRoot%\Temp` (escribible solo por administradores/SYSTEM, no por
+  usuarios estándar): un proceso sin privilegios no puede alterarlo. Si no se
+  puede escribir ahí, no se crea la tarea en un sitio inseguro (se devuelve
+  fallo) en vez de caer a una ruta vulnerable.
+- Migración: se elimina la clave `Run` insegura de versiones anteriores y NO se
+  recrea la tarea automáticamente.
+
+**Tests:** `test_winsetup.py` verifica que el XML se ubica en la carpeta
+solo-admin y que sin carpeta segura ni se invoca `schtasks`.
 
 ## Issue G — Rollback ensayado del release y camino de arranque poco probado
 **Lección Knight Capital + Meta (deploy gradual, rollback ensayado, no reutilizar
@@ -142,8 +160,8 @@ De las lecciones AT&T 1990 / Facebook 2021 / Cloudflare 2019 / Rogers 2022:
   *recovery*). Refuerza #29: el camino de reversión se ejecuta solo cuando algo
   ya salió mal, así que es el que más pruebas necesita.
 
-Nota: el hallazgo de seguridad FM-5 se maneja en privado; archivar como issue
-con los detalles cuando el repo pase a privado y/o tras confirmarlo.
+Nota: el hallazgo de seguridad FM-5 quedó RESUELTO (ver Issue F): ya no se
+auto-arranca elevado por defecto y el `task.xml` se genera en carpeta solo-admin.
 
 ### Lecciones descartadas (por qué NO aplican)
 - **Zelkova/Tiros (SMT):** verificación formal de políticas; NetQuick no tiene
