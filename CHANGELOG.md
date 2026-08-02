@@ -5,6 +5,26 @@ NetQuick change history. The code version lives in `netquick.py`
 
 ## [1.3.0-beta] — unreleased
 
+- Static coherence preflight (issue #26): before any netsh, the whole config is
+  checked as a set — gateway inside the subnet (now a rejection, no longer an
+  applied-with-warning), IP not the network/broadcast address, IP ≠ gateway —
+  with a specific message per rule.
+- Simulated dry run (issue #28): `pythonw netquick.py --sim` runs the real UI
+  against an in-memory network (`simops.py`) — no admin, nothing real touched;
+  the auto-revert flow is now an automated test on top of it.
+- Supervised operations (issue #25): an unexpected exception while applying,
+  reverting or scanning can no longer leave the widget zombie — it's logged
+  with its traceback, reported honestly in red, and every control stays usable.
+- Error-budget report (issue #24): `python report.py` summarizes the structured
+  log — success rate per operation vs a 99% target, top failure reasons and
+  duration percentiles; exit code 1 on breach.
+- Property-based tests (issue #23): hypothesis generates the cases for the
+  parsers and validators, derandomized so failures reproduce identically.
+- Rehearsed rollback (issue #29): `install.ps1` accepts `NETQUICK_TAG` to pin a
+  previous release and verifies the published SHA256 of the download; procedure
+  and rehearsal record in `docs/rollback.md`.
+- The July engineering review is versioned in
+  `docs/engineering-review-2026-07.md` (issue #27).
 - Security (FM-5): NetQuick no longer auto-registers to start with Windows on
   first run — it opens, stays in the tray, and start-with-Windows is a user
   option in ⚙ (off by default). When enabled, the `task.xml` is generated in

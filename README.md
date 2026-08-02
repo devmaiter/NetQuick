@@ -30,6 +30,7 @@
 | Install from source (no .exe) | `irm https://raw.githubusercontent.com/devmaiter/NetQuick/main/install-src.ps1 \| iex` |
 | Repo already cloned (development) | `.\setup.ps1`, then double-click `NetQuick.vbs` |
 | Directly with Python | `pythonw netquick.py` |
+| Dry run (simulated network, no admin) | `pythonw netquick.py --sim` |
 | **Uninstall** | `irm https://raw.githubusercontent.com/devmaiter/NetQuick/main/uninstall.ps1 \| iex` |
 
 After installing, open a new terminal and type **`netquick`**, or use the Desktop shortcut.
@@ -46,6 +47,8 @@ After installing, open a new terminal and type **`netquick`**, or use the Deskto
 | `netops.py` | Network operations (netsh, psutil, scanner, Dante mDNS, emergency revert) |
 | `store.py` | Profile and configuration persistence (JSON with durable writes) |
 | `winsetup.py` | Windows integration (auto-start, DPI, single instance) |
+| `simops.py` | Simulated in-memory backend for the `--sim` dry run |
+| `report.py` | Error-budget report from the structured log (`python report.py`) |
 | `NetQuick.vbs` | Launcher without a console window (double-click) |
 | `NetQuick.spec` | `.exe` packaging with PyInstaller |
 | `install.ps1` / `install-src.ps1` | Terminal installers (`irm ... \| iex`) |
