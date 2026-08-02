@@ -20,11 +20,15 @@ import netquick
 class FakeOps:
     """Same contract as netops, with fixed answers and call recording."""
 
-    def __init__(self, dhcp=False, interfaces=None, gw_responds=True):
+    def __init__(self, dhcp=False, interfaces=None, gw_responds=True,
+                 static_exc=None, scan_exc=None, revert_exc=None):
         self.dhcp = dhcp
         self.interfaces = interfaces if interfaces is not None else \
             [{"name": "Ethernet", "ip": "10.0.0.5"}]
         self.gw_responds = gw_responds
+        self.static_exc = static_exc
+        self.scan_exc = scan_exc
+        self.revert_exc = revert_exc
         self.static_called = None
         self.dhcp_called = None
         self.revert_called = None
@@ -43,8 +47,15 @@ class FakeOps:
         return True
 
     def set_static(self, name, ip, mask, gw=None, dns=None):
+        if self.static_exc:
+            raise self.static_exc
         self.static_called = (name, ip, mask, gw, dns)
         return True, "IP applied"
+
+    def scan_network(self, name, timeout_ms=250):
+        if self.scan_exc:
+            raise self.scan_exc
+        return [{"ip": "10.0.0.5", "mac": "", "own": True, "dante": None}]
 
     def set_dhcp(self, name):
         self.dhcp_called = name
@@ -57,6 +68,8 @@ class FakeOps:
         return self.gw_responds
 
     def revert_to(self, name, previous):
+        if self.revert_exc:
+            raise self.revert_exc
         self.revert_called = (name, previous)
         return True, f"Reverted to {previous.get('ip', '')}"
 
@@ -252,5 +265,79 @@ def test_apply_dhcp_cancels_the_countdown(monkeypatch):
         w.apply_dhcp()
         assert w._revert_previous is None
         assert fake.revert_called is None
+    finally:
+        w.root.destroy()
+
+
+# --- #25: an unexpected failure must not leave the widget zombie --------------
+def test_arbitrary_exception_in_apply_leaves_widget_usable(monkeypatch, caplog):
+    """The issue's acceptance criterion: FakeOps blows up with an arbitrary
+    exception; the widget stays usable (buttons enabled, honest message) and
+    the error lands in the structured log — never a silent traceback."""
+    w, _ = _create(monkeypatch, static_exc=RuntimeError("chaos"))
+    try:
+        w._put(w.ip, "192.168.1.50")
+        with caplog.at_level("ERROR", logger="netquick"):
+            w.apply_ip()                       # must NOT raise
+        assert "✗" in w.status["text"]
+        assert str(w.btn_apply["state"]) == "normal"
+        assert str(w.btn_dhcp["state"]) == "normal"
+        line = "".join(r.message for r in caplog.records)
+        assert "op=ui_apply" in line and "result=error" in line
+        assert any("chaos" in (r.exc_text or "") for r in caplog.records)
+    finally:
+        w.root.destroy()
+
+
+def test_exception_during_revert_reports_and_survives(monkeypatch, caplog):
+    w, _ = _create(monkeypatch, gw_responds=False,
+                   revert_exc=RuntimeError("chaos"))
+    try:
+        _apply_bad_ip(w)
+        w._revert_remaining = 0
+        with caplog.at_level("ERROR", logger="netquick"):
+            w._revert_tick()                   # must NOT raise
+        assert "Could not revert" in w.status["text"]
+        assert w._revert_previous is None      # the countdown is disarmed
+        assert "op=ui_revert" in "".join(r.message for r in caplog.records)
+    finally:
+        w.root.destroy()
+
+
+class _SyncThread:
+    """Runs the scanner 'thread' inline so the test is deterministic."""
+
+    def __init__(self, target=None, daemon=None):
+        self._target = target
+
+    def start(self):
+        self._target()
+
+
+def _find_widgets(root, cls):
+    found = []
+    for child in root.winfo_children():
+        if isinstance(child, cls):
+            found.append(child)
+        found.extend(_find_widgets(child, cls))
+    return found
+
+
+def test_exception_in_scanner_reenables_and_says_so(monkeypatch, caplog):
+    """The real zombie: the scan thread dies -> 'Scanning…' and a disabled
+    Rescan button forever. Supervised: button back, clear message, logged."""
+    w, _ = _create(monkeypatch, scan_exc=RuntimeError("chaos"))
+    try:
+        monkeypatch.setattr(netquick.threading, "Thread", _SyncThread)
+        with caplog.at_level("ERROR", logger="netquick"):
+            w.open_scanner()
+            w.root.update()                    # delivers the after(0, finish)
+        win = _find_widgets(w.root, tk.Toplevel)[0]
+        rescan = next(b for b in _find_widgets(win, tk.Button)
+                      if "Rescan" in b["text"])
+        assert str(rescan["state"]) == "normal"
+        labels = [lb["text"] for lb in _find_widgets(win, tk.Label)]
+        assert any("scan failed" in t for t in labels)
+        assert "op=ui_scan" in "".join(r.message for r in caplog.records)
     finally:
         w.root.destroy()
