@@ -149,7 +149,7 @@ def test_first_dns(text, expected):
     assert netops._first_dns(text) == expected
 
 
-# --- _validate_static --------------------------------------------------------
+# --- _validate_static: field format ------------------------------------------
 @pytest.mark.parametrize("ip,mask,gw,dns,fragment", [
     ("not-an-ip", "255.255.255.0", "", "", "Invalid IP"),
     ("10.0.0.5", "1.2.3.4", "", "", "Invalid subnet mask"),
@@ -158,6 +158,25 @@ def test_first_dns(text, expected):
 ])
 def test_validate_static_detects_each_field(ip, mask, gw, dns, fragment):
     assert fragment in netops._validate_static(ip, mask, gw, dns)
+
+
+# --- _validate_static: coherence preflight (issue #26, Zelkova) ---------------
+# Table of configs that LOOK fine field by field but can't work together; the
+# message must say the exact rule that failed, before any netsh runs.
+@pytest.mark.parametrize("ip,mask,gw,fragment", [
+    ("10.0.0.0", "255.255.255.0", "", "network address"),
+    ("10.0.0.255", "255.255.255.0", "", "broadcast address"),
+    ("10.0.1.0", "255.255.0.0", "", None),          # .0 mid-range /16: fine
+    ("10.0.0.5", "255.255.255.0", "10.0.0.5", "same address"),
+    ("10.0.0.5", "255.255.255.0", "192.168.99.1", "outside the subnet"),
+    ("10.0.0.5", "255.255.255.0", "10.0.0.1", None),
+])
+def test_validate_static_coherence_table(ip, mask, gw, fragment):
+    error = netops._validate_static(ip, mask, gw, "")
+    if fragment is None:
+        assert error is None
+    else:
+        assert fragment in error
 
 
 def test_validate_static_accepts_all_valid():
@@ -234,15 +253,17 @@ def test_set_static_half_done_dns_logs_partial(monkeypatch, caplog):
     assert "result=partial" in "".join(r.message for r in caplog.records)
 
 
-def test_set_static_gateway_outside_subnet_is_warning_not_failure(monkeypatch):
-    """A gateway outside the subnet IS a success (it may be intentional): the
-    IP was applied; it's left as a warning, not a failure."""
-    monkeypatch.setattr(netops, "ip_in_use", lambda ip: False)
-    monkeypatch.setattr(netops, "run", lambda cmd, quiet=False: _FakeRun(0))
+def test_set_static_gateway_outside_subnet_is_rejected_in_preflight(monkeypatch):
+    """Since issue #26 an off-subnet gateway is caught by the static preflight
+    (it used to be an applied-with-warning): nothing reaches netsh."""
+    def _must_not_run(cmd, quiet=False):
+        raise AssertionError("preflight must reject before any netsh")
+
+    monkeypatch.setattr(netops, "run", _must_not_run)
     ok, msg = netops.set_static("Ethernet", "10.0.0.5", "255.255.255.0",
                                 "192.168.99.1", "")
-    assert ok is True
-    assert "gateway outside the subnet" in msg
+    assert ok is False
+    assert "outside the subnet" in msg
 
 
 # --- #20 / FM-2: check_ip with a directed ARP probe --------------------------

@@ -16,12 +16,18 @@ Write-Host ""
 # 1) Installation folder
 New-Item -ItemType Directory -Force -Path $dest | Out-Null
 
-# 2) Find the .exe of the latest Release on GitHub
-Write-Host "  Looking for the latest version..." -ForegroundColor Gray
+# 2) Find the .exe of the requested Release on GitHub.
+#    Default: latest. Rollback (see docs/rollback.md): set NETQUICK_TAG to a
+#    previous tag first, e.g.  $env:NETQUICK_TAG = "v1.2.2-beta"
+$tag = $env:NETQUICK_TAG
+$api = if ($tag) { "https://api.github.com/repos/$repo/releases/tags/$tag" }
+       else      { "https://api.github.com/repos/$repo/releases/latest" }
+if ($tag) { Write-Host "  Rollback/pin requested: $tag" -ForegroundColor Yellow }
+else      { Write-Host "  Looking for the latest version..." -ForegroundColor Gray }
 try {
-    $release = Invoke-RestMethod "https://api.github.com/repos/$repo/releases/latest" `
-        -Headers @{ "User-Agent" = "NetQuick-Installer" }
+    $release = Invoke-RestMethod $api -Headers @{ "User-Agent" = "NetQuick-Installer" }
 } catch {
+    if ($tag) { throw "Release '$tag' not found in $repo (check the tag name)." }
     throw "Could not query GitHub. Check your internet connection."
 }
 
@@ -34,6 +40,18 @@ if (-not $asset) {
 $sizeMB = [math]::Round($asset.size / 1MB, 1)
 Write-Host "  Downloading $($asset.name) ($sizeMB MB)..." -ForegroundColor Gray
 Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $exePath -UseBasicParsing
+
+# 3b) Verify the SHA256 when the release publishes it (v1.2.2-beta onwards):
+#     a rollback you can't trust is not a rollback.
+if ($release.body -match "SHA256\s+([0-9a-fA-F]{64})") {
+    $expected = $Matches[1]
+    $actual = (Get-FileHash $exePath -Algorithm SHA256).Hash
+    if ($actual -ne $expected) {
+        Remove-Item $exePath -Force
+        throw "SHA256 mismatch (expected $expected, got $actual). Download removed."
+    }
+    Write-Host "  SHA256 verified." -ForegroundColor Green
+}
 
 # 4) Desktop shortcut
 $desktop = [Environment]::GetFolderPath("Desktop")

@@ -10,6 +10,7 @@ NetQuick Mini — floating widget, always on top, to change network/IP on the fl
   again. "Quit" is in the icon's menu (right-click).
 """
 import argparse
+import logging
 import threading
 import tkinter as tk
 import webbrowser
@@ -20,6 +21,9 @@ import store
 import winsetup
 
 __version__ = "1.3.0-beta"
+
+# Same structured log as netops: the UI supervisor writes there too
+log = logging.getLogger("netquick")
 
 try:
     import pystray
@@ -395,7 +399,12 @@ class MiniWidget:
     def _revert_now(self):
         name, previous = self._revert_previous
         self._cancel_confirmation()
-        ok, _ = self.ops.revert_to(name, previous)
+        try:
+            ok, _ = self.ops.revert_to(name, previous)
+        except Exception:
+            log.exception("op=ui_revert result=error reason=unexpected "
+                          "iface=%s", name)
+            ok = False
         self.refresh()
         # after refresh: _on_iface overwrites the status with the normal state
         if ok:
@@ -445,10 +454,20 @@ class MiniWidget:
         # Applying something new (including the DHCP button as a manual rescue)
         # cancels any pending countdown.
         self._cancel_confirmation()
-        previous = self.ops.get_config(name)
-        ok, msg = strategy.apply(self.ops, name)
+        try:
+            previous = self.ops.get_config(name)
+            ok, msg = strategy.apply(self.ops, name)
+        except Exception:
+            # Supervision (issue #25, Erlang lesson): errors happen; what must
+            # never happen is a hung widget with a silent traceback. Log it
+            # structured, tell the user, and leave every control usable.
+            log.exception("op=ui_apply result=error reason=unexpected iface=%s",
+                          name)
+            self._msg("✗ Unexpected error — nothing confirmed, try again", ERR)
+            self._update_mode_buttons()
+            return False
         # Three honest states: green = clean success; amber = applied but with
-        # warnings (e.g. gateway outside the subnet); red = not applied
+        # warnings (e.g. could not verify the IP was free); red = not applied
         # (reject, netsh error, or half-done DNS). Never "green" hiding a
         # problem.
         if ok:
@@ -557,11 +576,23 @@ class MiniWidget:
             btn_re.config(state="disabled")
 
             def work():
-                devices = self.ops.scan_network(name)
+                # The scan runs on its own thread: an exception here would die
+                # silently and leave "Scanning…" plus a disabled button forever
+                # — the zombie of issue #25. Supervise it: log, re-enable, say so.
+                try:
+                    devices = self.ops.scan_network(name)
+                except Exception:
+                    log.exception("op=ui_scan result=error reason=unexpected "
+                                  "iface=%s", name)
+                    devices = None
                 def finish():
                     if win.winfo_exists():
                         btn_re.config(state="normal")
-                        render(devices)
+                        if devices is None:
+                            status_lbl.config(
+                                text="✗ The scan failed — try again", fg=ERR)
+                        else:
+                            render(devices)
                 self.root.after(0, finish)
 
             threading.Thread(target=work, daemon=True).start()
@@ -676,7 +707,15 @@ def _relaunch_args():
 
 
 if __name__ == "__main__":
-    if not winsetup.already_running():
+    import sys
+    if "--sim" in sys.argv:
+        # Dry run (issue #28): the real UI against a simulated network — no
+        # admin, no netsh, no real profiles touched. Runs alongside a normal
+        # instance on purpose (it's a rehearsal, not the app).
+        import simops
+        winsetup.dpi_awareness()
+        MiniWidget(ops=simops.SimOps(), store_mod=simops.SimStore()).run()
+    elif not winsetup.already_running():
         winsetup.dpi_awareness()
         winsetup.first_run_exe()
         MiniWidget().run()

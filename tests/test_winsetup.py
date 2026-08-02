@@ -59,6 +59,46 @@ def test_create_task_writes_xml_in_admin_only_dir(monkeypatch, tmp_path):
     assert not os.path.exists(seen["path"])       # deleted after creating the task
 
 
+# --- #29: the .vbs branch of set_startup (the barely-exercised path) ---------
+# Knight Capital's pattern: two code paths, only one ever tested. The FROZEN
+# branch (schtasks) is covered above; this is the development branch that
+# writes a .vbs into the Startup folder.
+def _vbs_env(monkeypatch, tmp_path):
+    monkeypatch.setattr(winsetup, "FROZEN", False)
+    monkeypatch.setattr(winsetup, "VBS_DST", str(tmp_path / "NetQuick.vbs"))
+    monkeypatch.setattr(winsetup.netops, "pythonw",
+                        lambda: r"C:\Py\pythonw.exe")
+
+
+def test_vbs_startup_on_writes_absolute_paths(monkeypatch, tmp_path):
+    _vbs_env(monkeypatch, tmp_path)
+    assert winsetup.set_startup(True)
+    content = (tmp_path / "NetQuick.vbs").read_text(encoding="utf-8")
+    # Absolute pythonw and script, both quoted (spaces in paths), hidden run
+    assert '""C:\\Py\\pythonw.exe""' in content
+    assert "netquick.py" in content
+    assert ", 0, False" in content
+    assert winsetup.in_startup()
+
+
+def test_vbs_startup_off_removes_and_is_idempotent(monkeypatch, tmp_path):
+    _vbs_env(monkeypatch, tmp_path)
+    winsetup.set_startup(True)
+    assert winsetup.set_startup(False)
+    assert not (tmp_path / "NetQuick.vbs").exists()
+    assert not winsetup.in_startup()
+    assert winsetup.set_startup(False)     # already off: still fine
+
+
+def test_vbs_startup_failure_returns_false(monkeypatch):
+    monkeypatch.setattr(winsetup, "FROZEN", False)
+    monkeypatch.setattr(winsetup, "VBS_DST",
+                        r"Z:\does-not-exist\NetQuick.vbs")
+    monkeypatch.setattr(winsetup.netops, "pythonw",
+                        lambda: r"C:\Py\pythonw.exe")
+    assert winsetup.set_startup(True) is False
+
+
 def test_create_task_without_safe_dir_does_not_use_insecure_path(monkeypatch):
     """If the protected folder can't be written to, the task is NOT created in
     an insecure spot: returns False and doesn't even call schtasks."""

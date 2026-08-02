@@ -520,7 +520,13 @@ def scan_network(name, timeout_ms=250):
 
 # --- Apply configuration ---------------------------------------------------
 def _validate_static(ip, mask, gw, dns):
-    """Error message of the first invalid field, or None if everything fits."""
+    """Error message of the first invalid field or incoherent combination, or
+    None if the whole config makes sense together.
+
+    Static preflight (issue #26, Zelkova lesson): everything that can be known
+    without sending a single packet is checked here, BEFORE any netsh, with a
+    specific message per rule — netsh would either fail cryptically or apply a
+    config that can't work."""
     if not is_valid_ip(ip):
         return f"Invalid IP: {ip}"
     if not is_valid_mask(mask):
@@ -529,6 +535,18 @@ def _validate_static(ip, mask, gw, dns):
         return f"Invalid gateway: {gw}"
     if dns and not is_valid_ip(dns):
         return f"Invalid DNS: {dns}"
+    network = ipaddress.ip_network(f"{ip.strip()}/{mask.strip()}", strict=False)
+    # /31 and /32 have no network/broadcast addresses in the classic sense
+    if network.prefixlen < 31:
+        if ipaddress.IPv4Address(ip.strip()) == network.network_address:
+            return f"{ip} is the network address of {network} — a host can't use it"
+        if ipaddress.IPv4Address(ip.strip()) == network.broadcast_address:
+            return f"{ip} is the broadcast address of {network} — a host can't use it"
+    if gw:
+        if gw.strip() == ip.strip():
+            return "Gateway and IP can't be the same address"
+        if ipaddress.IPv4Address(gw.strip()) not in network:
+            return f"Gateway {gw} is outside the subnet {network}"
     return None
 
 
@@ -568,14 +586,9 @@ def set_static(name, ip, mask, gw=None, dns=None):
         if not (r2 and r2.returncode == 0):
             dns_ok = False
             warnings.append("DNS could not be applied")
-    if gw:
-        network = ipaddress.ip_network(f"{ip}/{mask}", strict=False)
-        if ipaddress.IPv4Address(gw) not in network:
-            warnings.append("gateway outside the subnet")
     # Rogers 2022 lesson: an operation that leaves the system half-done must
     # not report a clean success. If DNS was requested and failed, the
-    # transaction did not meet its goal -> ok=False (a gateway outside the
-    # subnet is only a warning).
+    # transaction did not meet its goal -> ok=False.
     result = "ok" if dns_ok else "partial"
     _log_op("set_static", result, " ".join(warnings), _dur(),
             iface=name, ip=ip, mask=mask, gw=gw, dns=dns)
