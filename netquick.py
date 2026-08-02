@@ -467,7 +467,7 @@ class MiniWidget:
             self._update_mode_buttons()
             return False
         # Three honest states: green = clean success; amber = applied but with
-        # warnings (e.g. gateway outside the subnet); red = not applied
+        # warnings (e.g. could not verify the IP was free); red = not applied
         # (reject, netsh error, or half-done DNS). Never "green" hiding a
         # problem.
         if ok:
