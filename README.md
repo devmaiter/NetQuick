@@ -52,6 +52,7 @@ After installing, open a new terminal and type **`netquick`**, or use the Deskto
 | `uninstall.ps1` | Uninstaller (reverts files, PATH, shortcuts and start-with-Windows) |
 | `setup.ps1` | Development setup (installs dependencies) |
 | `tests/` | Tests of `netops`, `store`, `winsetup` and the UI with fakes (pytest, run in CI) |
+| `docs/` | [Engineering review 2026-07](docs/engineering-review-2026-07.md) — findings, invariants and follow-up backlog |
 | `CHANGELOG.md` | Change history |
 
 ---
