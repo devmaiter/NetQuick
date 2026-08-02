@@ -3,7 +3,7 @@
 NetQuick change history. The code version lives in `netquick.py`
 (`__version__`) and is the single source of truth.
 
-## [1.3.0-beta] — unreleased
+## [1.3.0-beta] — 2026-08-02
 
 - Static coherence preflight (issue #26): before any netsh, the whole config is
   checked as a set — gateway inside the subnet (now a rejection, no longer an
