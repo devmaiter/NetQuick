@@ -676,7 +676,15 @@ def _relaunch_args():
 
 
 if __name__ == "__main__":
-    if not winsetup.already_running():
+    import sys
+    if "--sim" in sys.argv:
+        # Dry run (issue #28): the real UI against a simulated network — no
+        # admin, no netsh, no real profiles touched. Runs alongside a normal
+        # instance on purpose (it's a rehearsal, not the app).
+        import simops
+        winsetup.dpi_awareness()
+        MiniWidget(ops=simops.SimOps(), store_mod=simops.SimStore()).run()
+    elif not winsetup.already_running():
         winsetup.dpi_awareness()
         winsetup.first_run_exe()
         MiniWidget().run()
