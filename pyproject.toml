@@ -15,4 +15,4 @@ testpaths = ["tests"]
 
 [tool.coverage.run]
 # The UI (netquick.py) will be included once its fake-based tests cover more paths
-include = ["netops.py", "store.py", "winsetup.py", "simops.py"]
+include = ["netops.py", "store.py", "winsetup.py", "simops.py", "report.py"]
